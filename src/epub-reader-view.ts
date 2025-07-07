@@ -27,6 +27,19 @@ export class EpubReaderView extends ItemView {
 	async onOpen() {
 		console.log('EpubReaderView onOpen called');
 		this.renderView();
+		
+		// Add keyboard navigation
+		this.containerEl.tabIndex = 0; // Make it focusable
+		this.containerEl.addEventListener('keydown', (e) => {
+			if (e.key === 'ArrowLeft') {
+				this.handlePrevious();
+				e.preventDefault();
+			} else if (e.key === 'ArrowRight') {
+				this.handleNext();
+				e.preventDefault();
+			}
+		});
+		this.containerEl.focus();
 	}
 
 	getState() {
@@ -135,10 +148,42 @@ export class EpubReaderView extends ItemView {
 			this.currentCfi = item.cfiBase;
 			console.log('Rendered html for index', index, 'CFI:', this.currentCfi);
 			
+			// Update navigation state
+			this.updateNavigationState();
+			
 		} catch (e) {
 			console.error('Error rendering page:', e);
 		} finally {
 			item.unload();
+		}
+	}
+
+	private handleNext() {
+		console.log('handleNext called');
+		if (this.spineItems && this.currentIndex < this.spineItems.length - 1) {
+			this.renderPage(this.currentIndex + 1);
+		}
+	}
+
+	private handlePrevious() {
+		console.log('handlePrevious called');
+		if (this.spineItems && this.currentIndex > 0) {
+			this.renderPage(this.currentIndex - 1);
+		}
+	}
+
+	private updateNavigationState() {
+		const prevBtn = this.containerEl.querySelector('#prev-btn') as HTMLButtonElement;
+		const nextBtn = this.containerEl.querySelector('#next-btn') as HTMLButtonElement;
+		const positionSpan = this.containerEl.querySelector('#position-indicator') as HTMLSpanElement;
+		
+		if (prevBtn && nextBtn && positionSpan && this.spineItems) {
+			// Update position indicator
+			positionSpan.setText(`${this.currentIndex + 1} / ${this.spineItems.length}`);
+			
+			// Update button states
+			prevBtn.disabled = this.currentIndex === 0;
+			nextBtn.disabled = this.currentIndex === this.spineItems.length - 1;
 		}
 	}
 
@@ -147,11 +192,31 @@ export class EpubReaderView extends ItemView {
 		container.empty();
 		
 		if (this.epubPath) {
+			// Add navigation controls
+			const navDiv = container.createEl('div');
+			navDiv.style.display = 'flex';
+			navDiv.style.justifyContent = 'space-between';
+			navDiv.style.alignItems = 'center';
+			navDiv.style.padding = '0.5em';
+			navDiv.style.borderBottom = '1px solid #ccc';
+			
+			const prevBtn = navDiv.createEl('button', { text: 'Previous' });
+			prevBtn.id = 'prev-btn';
+			prevBtn.onclick = () => this.handlePrevious();
+			
+			const positionSpan = navDiv.createEl('span');
+			positionSpan.id = 'position-indicator';
+			positionSpan.setText('');
+			
+			const nextBtn = navDiv.createEl('button', { text: 'Next' });
+			nextBtn.id = 'next-btn';
+			nextBtn.onclick = () => this.handleNext();
+			
 			// Add content area for EPUB content only
 			const contentDiv = container.createEl('div');
 			contentDiv.id = 'epub-content';
 			contentDiv.style.width = '100%';
-			contentDiv.style.height = '100%';
+			contentDiv.style.height = 'calc(100% - 50px)'; // Account for navigation height
 			contentDiv.style.padding = '1em';
 			contentDiv.style.overflow = 'auto';
 			
