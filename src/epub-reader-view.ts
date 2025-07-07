@@ -31,10 +31,14 @@ export class EpubReaderView extends ItemView {
 		// Add keyboard navigation
 		this.containerEl.tabIndex = 0; // Make it focusable
 		this.containerEl.addEventListener('keydown', (e) => {
-			if (e.key === 'ArrowLeft') {
+			// Only handle arrow keys and only when no text is selected
+			const selection = window.getSelection();
+			const hasSelection = selection && selection.toString().length > 0;
+			
+			if (!hasSelection && e.key === 'ArrowLeft') {
 				this.handlePrevious();
 				e.preventDefault();
-			} else if (e.key === 'ArrowRight') {
+			} else if (!hasSelection && e.key === 'ArrowRight') {
 				this.handleNext();
 				e.preventDefault();
 			}
@@ -219,6 +223,8 @@ export class EpubReaderView extends ItemView {
 			contentDiv.style.height = 'calc(100% - 50px)'; // Account for navigation height
 			contentDiv.style.padding = '1em';
 			contentDiv.style.overflow = 'auto';
+			contentDiv.style.userSelect = 'text'; // Explicitly enable text selection
+			contentDiv.style.webkitUserSelect = 'text'; // For webkit browsers
 			
 		} else {
 			container.createEl('div', { text: 'EPUB Reader - No EPUB file specified' });
