@@ -193,18 +193,30 @@ export class EpubReaderView extends ItemView {
 
 	private async navigateToCfi(cfi: string) {
 		try {
-			// Find which spine item contains this CFI
+			// Find which spine item contains this CFI by finding the best match
+			let bestMatch = -1;
+			let bestMatchLength = 0;
+			
 			for (let i = 0; i < this.spineItems.length; i++) {
 				const item = this.spineItems[i];
-				if (cfi.startsWith(item.cfiBase)) {
-					console.log('Found CFI in spine item:', i, item.cfiBase);
-					await this.renderPage(i);
-					return;
+				const itemCfi = item.cfiBase;
+				
+				// Check if the saved CFI starts with this spine item's CFI
+				// and if this is a better (longer) match than what we found before
+				if (cfi.startsWith(itemCfi) && itemCfi.length > bestMatchLength) {
+					bestMatch = i;
+					bestMatchLength = itemCfi.length;
 				}
 			}
-			// If CFI not found, start from beginning
-			console.warn('CFI not found, starting from beginning');
-			await this.renderPage(0);
+			
+			if (bestMatch !== -1) {
+				console.log('Found CFI in spine item:', bestMatch, this.spineItems[bestMatch].cfiBase);
+				await this.renderPage(bestMatch);
+			} else {
+				// If CFI not found, start from beginning
+				console.warn('CFI not found, starting from beginning');
+				await this.renderPage(0);
+			}
 		} catch (error) {
 			console.error('Error navigating to CFI:', error);
 			await this.renderPage(0);
