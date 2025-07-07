@@ -65,24 +65,14 @@ export default class EpubReaderPlugin extends Plugin {
 		const epubPath = this.resolveEpubPath(epubProperty);
 		console.log('Resolved EPUB path:', epubPath);
 
-		let leaf = workspace.getLeavesOfType(EPUB_READER_VIEW_TYPE)[0];
-
-		if (!leaf) {
-			console.log('Creating new EPUB reader leaf in main workspace...');
-			leaf = workspace.getLeaf();
-			await leaf.setViewState({ 
-				type: EPUB_READER_VIEW_TYPE, 
-				active: true,
-				state: { epubPath }
-			});
-		} else {
-			console.log('Found existing EPUB reader leaf');
-			// Update the existing view with new EPUB path
-			const view = leaf.view as EpubReaderView;
-			if (view && view.setEpubPath) {
-				view.setEpubPath(epubPath);
-			}
-		}
+		// Always create a new tab
+		console.log('Creating new EPUB reader leaf in main workspace...');
+		const leaf = workspace.getLeaf('tab');
+		await leaf.setViewState({ 
+			type: EPUB_READER_VIEW_TYPE, 
+			active: true,
+			state: { epubPath }
+		});
 
 		workspace.revealLeaf(leaf);
 		console.log('EPUB reader view activated');
