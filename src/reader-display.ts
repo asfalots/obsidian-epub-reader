@@ -38,17 +38,36 @@ export class ReaderDisplay {
 			}
 
 			// Find text nodes that contain the highlight text
-			const highlightText = annotation.text;
+			const highlightText = annotation.text.trim();
+			
+			// Try exact match first, then fuzzy match
+			let matchFound = false;
 			
 			for (const textNode of textNodes) {
+				if (matchFound) break;
+				
 				const textContent = textNode.textContent || '';
-				const startIndex = textContent.indexOf(highlightText);
+				let startIndex = textContent.indexOf(highlightText);
+				
+				// If exact match not found, try fuzzy matching (accounting for formatting differences)
+				if (startIndex === -1) {
+					const normalizedText = textContent.replace(/\s+/g, ' ').trim();
+					const normalizedHighlight = highlightText.replace(/\s+/g, ' ').trim();
+					startIndex = normalizedText.indexOf(normalizedHighlight);
+					
+					if (startIndex !== -1) {
+						// Map back to original text position
+						const beforeText = normalizedText.substring(0, startIndex);
+						const beforeOriginal = textContent.substring(0, textContent.replace(/\s+/g, ' ').indexOf(beforeText) + beforeText.length);
+						startIndex = beforeOriginal.length;
+					}
+				}
 				
 				if (startIndex !== -1) {
 					// Create range for the found text
 					const range = document.createRange();
 					range.setStart(textNode, startIndex);
-					range.setEnd(textNode, startIndex + highlightText.length);
+					range.setEnd(textNode, Math.min(startIndex + highlightText.length, textContent.length));
 					
 					// Create highlight span
 					const span = this.createHighlightSpan(annotation);
@@ -56,11 +75,15 @@ export class ReaderDisplay {
 					try {
 						// Wrap the range with the highlight span
 						this.wrapRangeWithHighlight(range, span);
-						break; // Only highlight the first occurrence
+						matchFound = true;
 					} catch (error) {
 						console.warn('Error wrapping text with highlight:', error);
 					}
 				}
+			}
+			
+			if (!matchFound) {
+				console.warn('Could not find text to highlight:', highlightText.substring(0, 50) + '...');
 			}
 		} catch (error) {
 			console.warn('Error applying highlight to content:', error);
@@ -74,8 +97,22 @@ export class ReaderDisplay {
 		const span = document.createElement('span');
 		span.style.backgroundColor = annotation.color;
 		span.style.cursor = 'pointer';
+		span.style.borderRadius = '2px';
+		span.style.padding = '1px 2px';
+		span.style.margin = '0 1px';
+		span.style.transition = 'opacity 0.2s ease';
 		span.setAttribute('data-annotation-id', annotation.id);
-		span.title = `Highlight: ${annotation.text.substring(0, 100)}${annotation.text.length > 100 ? '...' : ''}`;
+		span.setAttribute('data-annotation-type', annotation.type);
+		span.title = `${annotation.type}: ${annotation.text.substring(0, 100)}${annotation.text.length > 100 ? '...' : ''}`;
+		
+		// Add hover effect
+		span.addEventListener('mouseenter', () => {
+			span.style.opacity = '0.8';
+		});
+		
+		span.addEventListener('mouseleave', () => {
+			span.style.opacity = '1';
+		});
 		
 		// Add click handler for future interaction
 		span.addEventListener('click', () => {
@@ -113,6 +150,17 @@ export class ReaderDisplay {
 	}
 
 	/**
+	 * Refreshes all highlights on the current page
+	 */
+	static async refreshHighlights(annotations: AnnotationData[], containerEl: HTMLElement): Promise<void> {
+		// Clear existing highlights first
+		this.clearDisplayedHighlights(containerEl);
+		
+		// Reapply all highlights
+		await this.applyHighlightsToPage(annotations, containerEl);
+	}
+
+	/**
 	 * Clears all displayed highlights from the page
 	 */
 	static clearDisplayedHighlights(containerEl: HTMLElement): void {
@@ -125,10 +173,15 @@ export class ReaderDisplay {
 			// Unwrap the span, keeping only its text content
 			const parent = span.parentNode;
 			if (parent) {
+				// Move all child nodes before the span
 				while (span.firstChild) {
 					parent.insertBefore(span.firstChild, span);
 				}
+				// Remove the span element
 				parent.removeChild(span);
+				
+				// Normalize the parent to merge adjacent text nodes
+				parent.normalize();
 			}
 		});
 	}

@@ -33,6 +33,7 @@ export class EpubReaderView extends ItemView {
 	private currentIndex: number = 0;
 	private currentCfi: string = '';
 	private highlightOverlay: HTMLElement | null = null;
+	private epubStylesheets: string = ''; // Cache for extracted CSS
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -104,6 +105,7 @@ export class EpubReaderView extends ItemView {
 
 	async setEpubPath(path: string) {
 		this.epubPath = path;
+		this.epubStylesheets = ''; // Reset cached stylesheets for new EPUB
 		this.renderView();
 		if (this.epubPath) {
 			await this.loadEpub();
@@ -144,6 +146,9 @@ export class EpubReaderView extends ItemView {
 
 			console.log('Book loaded successfully:', this.book);
 			
+			// Extract stylesheets once and cache them
+			await this.extractStylesheets();
+			
 			// Get spine items
 			this.spineItems = this.book.spine && this.book.spine.spineItems;
 			if (!this.spineItems || this.spineItems.length === 0) {
@@ -167,6 +172,204 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
+	/**
+	 * Extract stylesheets from the EPUB and cache them for reuse
+	 */
+	private async extractStylesheets(): Promise<void> {
+		if (!this.book || !this.book.resources) {
+			console.warn('Book or resources not available for stylesheet extraction');
+			return;
+		}
+
+		try {
+			let stylesheets = '';
+			
+			// Get all CSS resources from the manifest
+			const resources = this.book.resources;
+			console.debug('Resources object:', resources);
+			console.debug('Manifest keys:', resources.manifest ? Object.keys(resources.manifest) : 'No manifest');
+			
+			if (resources.manifest) {
+				for (const [path, resource] of Object.entries(resources.manifest)) {
+					const resourceItem = resource as any;
+					console.debug('Checking resource:', path, 'type:', resourceItem.type, 'href:', resourceItem.href);
+					
+					if (resourceItem.type === 'text/css' || path.endsWith('.css')) {
+						try {
+							const cssHref = resourceItem.href || path;
+							console.debug('Loading stylesheet:', path, 'with href:', cssHref);
+							
+							// Try multiple methods to load the CSS
+							let cssContent = null;
+							
+							// Method 1: Try resources.get() with href
+							try {
+								cssContent = await resources.get(cssHref);
+								console.debug('resources.get(href) result:', typeof cssContent, cssContent?.constructor?.name);
+							} catch (e1) {
+								console.debug('resources.get(href) failed:', e1.message);
+								
+								// Method 2: Try book.load() with the href from resource
+								try {
+									cssContent = await this.book.load(cssHref);
+									console.debug('book.load() with href result:', typeof cssContent);
+								} catch (e2) {
+									console.debug('book.load() with href failed:', e2.message);
+									
+									// Method 3: Try archive.getText() if available
+									try {
+										if (this.book.archive && this.book.archive.getText) {
+											cssContent = await this.book.archive.getText(cssHref);
+											console.debug('archive.getText() result:', typeof cssContent);
+										}
+									} catch (e3) {
+										console.debug('archive.getText() failed:', e3.message);
+									}
+								}
+							}
+							
+							if (cssContent) {
+								// Convert to text if it's a blob or other format
+								const cssText = typeof cssContent === 'string' ? cssContent : await this.extractTextFromResource(cssContent);
+								if (cssText) {
+									// Process URLs in CSS and scope to container
+									const processedCss = this.processCssUrls(cssText, path);
+									const scopedCss = this.scopeCssToContainer(processedCss);
+									stylesheets += `<style type="text/css">\n/* From: ${path} */\n${scopedCss}\n</style>\n`;
+									console.debug('Successfully loaded stylesheet:', path, 'length:', cssText.length);
+								}
+							}
+						} catch (error) {
+							console.warn('Failed to load stylesheet:', path, error);
+						}
+					}
+				}
+			}
+			
+			this.epubStylesheets = stylesheets;
+			console.debug('Extracted stylesheets:', this.epubStylesheets.length, 'characters');
+			
+			// Fallback: Try loading CSS files directly from cssUrls array
+			if (stylesheets === '' && resources.cssUrls && resources.cssUrls.length > 0) {
+				console.debug('Fallback: Loading CSS from cssUrls array:', resources.cssUrls);
+				for (const cssUrl of resources.cssUrls) {
+					try {
+						console.debug('Loading CSS file directly:', cssUrl);
+						let cssContent = null;
+						
+						// Try different loading methods
+						try {
+							cssContent = await this.book.load(cssUrl);
+							console.debug('Direct book.load() result:', typeof cssContent);
+						} catch (e1) {
+							try {
+								if (this.book.archive && this.book.archive.getText) {
+									cssContent = await this.book.archive.getText(cssUrl);
+									console.debug('Direct archive.getText() result:', typeof cssContent);
+								}
+							} catch (e2) {
+								console.debug('Direct loading failed for:', cssUrl, e2.message);
+							}
+						}
+						
+						if (cssContent) {
+							const cssText = typeof cssContent === 'string' ? cssContent : await this.extractTextFromResource(cssContent);
+							if (cssText) {
+								const processedCss = this.processCssUrls(cssText, cssUrl);
+								const scopedCss = this.scopeCssToContainer(processedCss);
+								stylesheets += `<style type="text/css">\n/* From: ${cssUrl} */\n${scopedCss}\n</style>\n`;
+								console.debug('Successfully loaded CSS from cssUrls:', cssUrl, 'length:', cssText.length);
+							}
+						}
+					} catch (error) {
+						console.warn('Failed to load CSS from cssUrls:', cssUrl, error);
+					}
+				}
+				this.epubStylesheets = stylesheets;
+				console.debug('Final extracted stylesheets:', this.epubStylesheets.length, 'characters');
+			}
+			
+		} catch (error) {
+			console.error('Error extracting stylesheets:', error);
+			this.epubStylesheets = '';
+		}
+	}
+
+	/**
+	 * Extract text content from various resource formats
+	 */
+	private async extractTextFromResource(resource: any): Promise<string> {
+		try {
+			if (typeof resource === 'string') {
+				return resource;
+			}
+			
+			if (resource instanceof Blob) {
+				return await resource.text();
+			}
+			
+			if (resource instanceof ArrayBuffer) {
+				return new TextDecoder().decode(resource);
+			}
+			
+			// Try to convert other formats
+			return String(resource);
+		} catch (error) {
+			console.warn('Failed to extract text from resource:', error);
+			return '';
+		}
+	}
+
+	/**
+	 * Scope CSS rules to the epub-reader-content container
+	 */
+	private scopeCssToContainer(css: string): string {
+		// Simple CSS scoping - prepend .epub-reader-content to all selectors
+		// This prevents EPUB styles from affecting Obsidian's UI
+		return css.replace(/([^{}]+)\{/g, (match, selector) => {
+			// Skip @rules like @media, @import, @font-face
+			if (selector.trim().startsWith('@')) {
+				return match;
+			}
+			
+			// Split multiple selectors and scope each one
+			const selectors = selector.split(',').map((s: string) => {
+				const trimmed = s.trim();
+				// Don't scope pseudo-elements and already scoped selectors
+				if (trimmed.includes('.epub-reader-content') || 
+					trimmed.startsWith(':') || 
+					trimmed.startsWith('::')) {
+					return trimmed;
+				}
+				return `.epub-reader-content ${trimmed}`;
+			}).join(', ');
+			
+			return `${selectors} {`;
+		});
+	}
+
+	/**
+	 * Process CSS to resolve relative URLs and make them absolute within the EPUB context
+	 */
+	private processCssUrls(css: string, cssPath: string): string {
+		// Handle url() references in CSS (fonts, images, etc.)
+		return css.replace(/url\(['"]?([^'"`)]+)['"]?\)/g, (match, url) => {
+			// Skip absolute URLs and data URLs
+			if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('/')) {
+				return match;
+			}
+			
+			try {
+				// Resolve relative URL against the CSS file's path
+				const resolvedUrl = this.book.resolve(url, cssPath);
+				return `url('${resolvedUrl}')`;
+			} catch (error) {
+				console.warn('Failed to resolve CSS URL:', url, 'in', cssPath, error);
+				return match;
+			}
+		});
+	}
+
 	private async renderPage(index: number) {
 		console.log('renderPage called with index:', index);
 		if (!this.spineItems) {
@@ -188,10 +391,11 @@ export class EpubReaderView extends ItemView {
 			const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
 			const body = bodyMatch ? bodyMatch[1] : text;
 			
-			// Update the content area
+			// Update the content area with stylesheets and content
 			const contentDiv = this.containerEl.querySelector('#epub-content');
 			if (contentDiv) {
-				contentDiv.innerHTML = body;
+				// Apply cached stylesheets and body content
+				contentDiv.innerHTML = this.epubStylesheets + body;
 			}
 			
 			this.currentCfi = item.cfiBase;
@@ -240,6 +444,10 @@ export class EpubReaderView extends ItemView {
 		
 		await FileOperations.insertHighlightIntoNote(this.app, file, highlightData, annotationData, config);
 		
+		// Refresh highlights to show the new one immediately
+		const annotations = await this.loadExistingHighlights();
+		await this.displayHighlightsInReader(annotations);
+		
 		console.debug('Highlight saved successfully:', highlightData);
 	}
 
@@ -270,6 +478,9 @@ export class EpubReaderView extends ItemView {
 			}
 
 			await this.app.vault.modify(file, lines.join('\n'));
+			
+			// Clear and refresh highlights immediately to reflect the removal
+			ReaderDisplay.clearDisplayedHighlights(this.containerEl);
 		} catch (error) {
 			console.error('Error removing existing highlight:', error);
 		}
@@ -336,6 +547,7 @@ export class EpubReaderView extends ItemView {
 			// Add content area for EPUB content only
 			const contentDiv = container.createEl('div');
 			contentDiv.id = 'epub-content';
+			contentDiv.className = 'epub-reader-content'; // Add class for CSS scoping
 			contentDiv.style.width = '100%';
 			contentDiv.style.height = 'calc(100% - 50px)'; // Account for navigation height
 			contentDiv.style.padding = '1em';
