@@ -3,10 +3,12 @@ import type EpubReaderPlugin from '../main';
 
 export interface EpubReaderSettings {
 	epubPropertyName: string;
+	progressPropertyName: string;
 }
 
 export const DEFAULT_SETTINGS: EpubReaderSettings = {
-	epubPropertyName: 'epub'
+	epubPropertyName: 'epub',
+	progressPropertyName: 'epub-cfi'
 }
 
 export class EpubReaderSettingTab extends PluginSettingTab {
@@ -30,6 +32,17 @@ export class EpubReaderSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.epubPropertyName)
 				.onChange(async (value) => {
 					this.plugin.settings.epubPropertyName = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Progress Property Name')
+			.setDesc('The front-matter property name used to store reading progress (CFI)')
+			.addText(text => text
+				.setPlaceholder('epub-cfi')
+				.setValue(this.plugin.settings.progressPropertyName)
+				.onChange(async (value) => {
+					this.plugin.settings.progressPropertyName = value;
 					await this.plugin.saveSettings();
 				}));
 	}

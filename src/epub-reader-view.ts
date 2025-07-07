@@ -6,6 +6,9 @@ export const EPUB_READER_VIEW_TYPE = 'epub-reader-view';
 
 export class EpubReaderView extends ItemView {
 	private epubPath: string = '';
+	private noteFilePath: string = '';
+	private savedProgress: string | undefined;
+	private pluginInstance: any = null;
 	private book: any = null;
 	private spineItems: any = null;
 	private currentIndex: number = 0;
@@ -48,13 +51,18 @@ export class EpubReaderView extends ItemView {
 
 	getState() {
 		return {
-			epubPath: this.epubPath
+			epubPath: this.epubPath,
+			noteFile: this.noteFilePath,
+			savedProgress: this.savedProgress
 		};
 	}
 
 	async setState(state: any, result: any) {
 		if (state?.epubPath) {
 			this.epubPath = state.epubPath;
+			this.noteFilePath = state.noteFile || '';
+			this.savedProgress = state.savedProgress;
+			this.pluginInstance = state.plugin;
 			this.renderView();
 			if (this.epubPath) {
 				await this.loadEpub();
@@ -114,8 +122,14 @@ export class EpubReaderView extends ItemView {
 
 			console.log('Spine items loaded:', this.spineItems.length, 'items');
 			
-			// Display first chapter
-			await this.renderPage(0);
+			// Navigate to saved position or start from beginning
+			if (this.savedProgress) {
+				console.log('Navigating to saved CFI:', this.savedProgress);
+				await this.navigateToCfi(this.savedProgress);
+			} else {
+				console.log('Starting at first chapter');
+				await this.renderPage(0);
+			}
 			
 		} catch (error) {
 			console.error('Error loading EPUB:', error);
@@ -155,10 +169,100 @@ export class EpubReaderView extends ItemView {
 			// Update navigation state
 			this.updateNavigationState();
 			
+			// Save progress
+			await this.saveProgress();
+			
 		} catch (e) {
 			console.error('Error rendering page:', e);
 		} finally {
 			item.unload();
+		}
+	}
+
+	private async navigateToCfi(cfi: string) {
+		try {
+			// Find which spine item contains this CFI
+			for (let i = 0; i < this.spineItems.length; i++) {
+				const item = this.spineItems[i];
+				if (cfi.startsWith(item.cfiBase)) {
+					console.log('Found CFI in spine item:', i, item.cfiBase);
+					await this.renderPage(i);
+					return;
+				}
+			}
+			// If CFI not found, start from beginning
+			console.warn('CFI not found, starting from beginning');
+			await this.renderPage(0);
+		} catch (error) {
+			console.error('Error navigating to CFI:', error);
+			await this.renderPage(0);
+		}
+	}
+
+	private async saveProgress() {
+		if (!this.noteFilePath || !this.pluginInstance) {
+			console.log('No note file path or plugin instance, skipping progress save');
+			return;
+		}
+
+		try {
+			const file = this.app.vault.getAbstractFileByPath(this.noteFilePath);
+			if (!file || !(file instanceof TFile)) {
+				console.error('Note file not found:', this.noteFilePath);
+				return;
+			}
+
+			// Read current file content
+			const content = await this.app.vault.read(file);
+			
+			// Parse front-matter and update progress
+			const lines = content.split('\n');
+			let frontmatterStart = -1;
+			let frontmatterEnd = -1;
+			
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].trim() === '---') {
+					if (frontmatterStart === -1) {
+						frontmatterStart = i;
+					} else {
+						frontmatterEnd = i;
+						break;
+					}
+				}
+			}
+			
+			const progressProperty = this.pluginInstance.settings.progressPropertyName;
+			
+			if (frontmatterStart !== -1 && frontmatterEnd !== -1) {
+				// Update existing front-matter
+				const frontmatterLines = lines.slice(frontmatterStart + 1, frontmatterEnd);
+				let progressLineIndex = -1;
+				
+				for (let i = 0; i < frontmatterLines.length; i++) {
+					if (frontmatterLines[i].startsWith(`${progressProperty}:`)) {
+						progressLineIndex = i;
+						break;
+					}
+				}
+				
+				if (progressLineIndex !== -1) {
+					frontmatterLines[progressLineIndex] = `${progressProperty}: "${this.currentCfi}"`;
+				} else {
+					frontmatterLines.push(`${progressProperty}: "${this.currentCfi}"`);
+				}
+				
+				const newLines = [
+					...lines.slice(0, frontmatterStart + 1),
+					...frontmatterLines,
+					...lines.slice(frontmatterEnd)
+				];
+				
+				await this.app.vault.modify(file, newLines.join('\n'));
+				console.log('Progress saved with CFI:', this.currentCfi);
+			}
+			
+		} catch (error) {
+			console.error('Error saving progress:', error);
 		}
 	}
 

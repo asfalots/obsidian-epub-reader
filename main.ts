@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView } from 'obsidian';
+import { Plugin, MarkdownView, TFile } from 'obsidian';
 import { EpubReaderSettings, DEFAULT_SETTINGS, EpubReaderSettingTab } from './src/settings';
 import { EpubReaderView, EPUB_READER_VIEW_TYPE } from './src/epub-reader-view';
 
@@ -30,7 +30,7 @@ export default class EpubReaderPlugin extends Plugin {
 					if (epubProperty) {
 						if (!checking) {
 							console.log('EPUB Reader command triggered');
-							this.activateEpubReaderView(epubProperty);
+							this.activateEpubReaderView(epubProperty, activeView.file);
 						}
 						return true;
 					}
@@ -57,7 +57,7 @@ export default class EpubReaderPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	async activateEpubReaderView(epubProperty: string) {
+	async activateEpubReaderView(epubProperty: string, noteFile: TFile) {
 		console.log('Activating EPUB reader view...');
 		const { workspace } = this.app;
 
@@ -65,13 +65,22 @@ export default class EpubReaderPlugin extends Plugin {
 		const epubPath = this.resolveEpubPath(epubProperty);
 		console.log('Resolved EPUB path:', epubPath);
 
+		// Get current progress if it exists
+		const frontmatter = this.app.metadataCache.getFileCache(noteFile)?.frontmatter;
+		const savedProgress = frontmatter?.[this.settings.progressPropertyName];
+
 		// Always create a new tab
 		console.log('Creating new EPUB reader leaf in main workspace...');
 		const leaf = workspace.getLeaf('tab');
 		await leaf.setViewState({ 
 			type: EPUB_READER_VIEW_TYPE, 
 			active: true,
-			state: { epubPath }
+			state: { 
+				epubPath,
+				noteFile: noteFile.path,
+				savedProgress: savedProgress,
+				plugin: this
+			}
 		});
 
 		workspace.revealLeaf(leaf);
