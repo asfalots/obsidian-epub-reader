@@ -4,6 +4,11 @@ import ePub from 'epubjs';
 
 export const EPUB_READER_VIEW_TYPE = 'epub-reader-view';
 
+const MAX_HIGHLIGHT_LENGTH = 5000;
+const HIGHLIGHT_DISPLAY_DELAY = 100;
+const SUCCESS_FEEDBACK_DURATION = 500;
+const ERROR_FEEDBACK_DURATION = 1000;
+
 interface HighlightData {
 	text: string;
 	cfi: string;
@@ -313,155 +318,98 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
-	private async saveHighlight(selection: Selection, config: any) {
+	private validateHighlightRequirements(): void {
 		if (!this.noteFilePath || !this.pluginInstance || !this.spineItems) {
-			console.error('Cannot save highlight: missing note file path, plugin instance, or spine items');
 			throw new Error('Missing required components for saving highlight');
+		}
+	}
+
+	private validateSelectedText(text: string): string {
+		if (!text) {
+			throw new Error('No text selected');
+		}
+		
+		if (text.length > MAX_HIGHLIGHT_LENGTH) {
+			console.warn('Selected text is very long, truncating to 5000 characters');
+			return text.substring(0, MAX_HIGHLIGHT_LENGTH) + '...';
+		}
+		
+		return text;
+	}
+
+	private async generateCfiFromRange(range: Range): Promise<string> {
+		const currentItem = this.spineItems[this.currentIndex];
+		if (!currentItem) {
+			throw new Error('Current section not available');
 		}
 
 		try {
-			const range = selection.getRangeAt(0);
-			const selectedText = selection.toString().trim();
+			await currentItem.load(this.book.load.bind(this.book));
+			const cfi = currentItem.cfiFromRange(range);
 			
-			if (!selectedText) {
-				console.warn('No text selected for highlighting');
-				throw new Error('No text selected');
+			if (!cfi || typeof cfi !== 'string') {
+				throw new Error('Invalid CFI generated');
 			}
-
-			if (selectedText.length > 5000) {
-				console.warn('Selected text is very long, truncating to 5000 characters');
-			}
-
-			// Get the current spine item
-			const currentItem = this.spineItems[this.currentIndex];
-			if (!currentItem) {
-				console.error('Current spine item not found');
-				throw new Error('Current section not available');
-			}
-
-			// Generate CFI from the range using the Section's cfiFromRange method
-			let cfi: string;
-			try {
-				// Load the section to access cfiFromRange method
-				await currentItem.load(this.book.load.bind(this.book));
-				cfi = currentItem.cfiFromRange(range);
-				
-				if (!cfi || typeof cfi !== 'string') {
-					throw new Error('Invalid CFI generated');
-				}
-				
-				console.debug('Generated CFI for highlight:', cfi);
-			} catch (error) {
-				console.error('Error generating CFI:', error);
-				throw new Error('Failed to generate position reference');
-			} finally {
-				currentItem.unload();
-			}
-
-			// Get the note file
-			const file = this.app.vault.getAbstractFileByPath(this.noteFilePath);
-			if (!file || !(file instanceof TFile)) {
-				console.error('Note file not found:', this.noteFilePath);
-				throw new Error('Note file not found');
-			}
-
-			// Remove any existing highlight at this CFI to prevent duplicates
-			await this.removeExistingHighlight(cfi);
-
-			// Read current file content (after potential removal)
-			const content = await this.app.vault.read(file);
 			
-			// Create highlight entry
-			const timestamp = new Date().toISOString();
-			const timestampMs = Date.now();
-			const highlightId = timestampMs.toString();
-			const highlightData: HighlightData = {
-				text: selectedText.length > 5000 ? selectedText.substring(0, 5000) + '...' : selectedText,
-				cfi: cfi,
-				color: config.color,
-				timestamp: timestamp,
-				section: this.currentIndex + 1
-			};
-
-			// Create annotation comment with structured data
-			const annotationData = {
-				id: highlightId,
-				cfi: cfi,
-				text: highlightData.text,
-				color: config.color,
-				timestamp: timestampMs,
-				type: config.name.toLowerCase()
-			};
-			const annotationComment = `<!-- EPUB_ANNOTATION: ${JSON.stringify(annotationData)} -->`;
-
-			// Apply template to create the highlight text
-			let highlightText = config.template
-				.replace(/\{\{text\}\}/g, highlightData.text)
-				.replace(/\{\{cfi\}\}/g, cfi)
-				.replace(/\{\{timestamp\}\}/g, timestamp)
-				.replace(/\{\{section\}\}/g, (this.currentIndex + 1).toString())
-				.replace(/\{\{date\}\}/g, new Date().toLocaleDateString())
-				.replace(/\{\{time\}\}/g, new Date().toLocaleTimeString());
-
-			// Combine highlight text with annotation comment below
-			const fullHighlightEntry = `${highlightText}\n${annotationComment}`;
-
-			// Find or create the section in the markdown file
-			const lines = content.split('\n');
-			let sectionIndex = -1;
-			
-			// Look for the configured section header (support for different heading levels)
-			const sectionPattern = new RegExp(`^\\s*${config.section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
-			for (let i = 0; i < lines.length; i++) {
-				if (sectionPattern.test(lines[i])) {
-					sectionIndex = i;
-					break;
-				}
-			}
-
-			// If section doesn't exist, create it at the end
-			if (sectionIndex === -1) {
-				// Add empty line before section if the file doesn't end with empty line
-				if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
-					lines.push('');
-				}
-				lines.push(config.section, '');
-				sectionIndex = lines.length - 2; // Point to the section header line
-			}
-
-			// Insert the highlight after the section header
-			// Find the appropriate insertion point - after existing content but before next section
-			let insertIndex = sectionIndex + 1;
-			
-			// Skip any existing content in this section
-			while (insertIndex < lines.length && 
-				   lines[insertIndex].trim() !== '' && 
-				   !lines[insertIndex].match(/^#+\s/)) {
-				insertIndex++;
-			}
-
-			// Add empty line before if there's content above (but not immediately after header)
-			if (insertIndex > sectionIndex + 1 && lines[insertIndex - 1].trim() !== '') {
-				lines.splice(insertIndex, 0, '');
-				insertIndex++;
-			}
-
-			// Insert the highlight entry
-			lines.splice(insertIndex, 0, fullHighlightEntry);
-			
-			// Add empty line after if there's content below
-			if (insertIndex + 1 < lines.length && lines[insertIndex + 1].trim() !== '') {
-				lines.splice(insertIndex + 1, 0, '');
-			}
-
-			// Write back to file
-			await this.app.vault.modify(file, lines.join('\n'));
-			console.log('Highlight saved successfully:', highlightData);
-
+			console.debug('Generated CFI for highlight:', cfi);
+			return cfi;
 		} catch (error) {
-			console.error('Error saving highlight:', error);
-			throw error; // Re-throw to show user feedback
+			console.error('Error generating CFI:', error);
+			throw new Error('Failed to generate position reference');
+		} finally {
+			currentItem.unload();
 		}
+	}
+
+	private createHighlightData(text: string, cfi: string, config: any): HighlightData {
+		return {
+			text,
+			cfi,
+			color: config.color,
+			timestamp: new Date().toISOString(),
+			section: this.currentIndex + 1
+		};
+	}
+
+	private createAnnotationData(highlightData: HighlightData, config: any): AnnotationData {
+		const timestampMs = Date.now();
+		return {
+			id: timestampMs.toString(),
+			cfi: highlightData.cfi,
+			text: highlightData.text,
+			color: config.color,
+			timestamp: timestampMs,
+			type: config.name.toLowerCase()
+		};
+	}
+
+	private applyTemplate(template: string, data: HighlightData): string {
+		return template
+			.replace(/\{\{text\}\}/g, data.text)
+			.replace(/\{\{cfi\}\}/g, data.cfi)
+			.replace(/\{\{timestamp\}\}/g, data.timestamp)
+			.replace(/\{\{section\}\}/g, data.section.toString())
+			.replace(/\{\{date\}\}/g, new Date().toLocaleDateString())
+			.replace(/\{\{time\}\}/g, new Date().toLocaleTimeString());
+	}
+
+	private async saveHighlight(selection: Selection, config: any): Promise<void> {
+		this.validateHighlightRequirements();
+
+		const range = selection.getRangeAt(0);
+		const selectedText = this.validateSelectedText(selection.toString().trim());
+		
+		const cfi = await this.generateCfiFromRange(range);
+		const file = await this.getAndValidateNoteFile();
+		
+		await this.removeExistingHighlight(cfi);
+		
+		const highlightData = this.createHighlightData(selectedText, cfi, config);
+		const annotationData = this.createAnnotationData(highlightData, config);
+		
+		await this.insertHighlightIntoNote(file, highlightData, annotationData, config);
+		
+		console.debug('Highlight saved successfully:', highlightData);
 	}
 
 	private async removeExistingHighlight(cfi: string) {
@@ -529,34 +477,29 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
-	private async displayHighlightsInReader(annotations: AnnotationData[]) {
+	private async displayHighlightsInReader(annotations: AnnotationData[]): Promise<void> {
 		if (!this.spineItems || !annotations.length) return;
 		
 		const currentItem = this.spineItems[this.currentIndex];
 		if (!currentItem) return;
 
-		// Filter annotations for current section
-		const currentSectionAnnotations = annotations.filter(annotation => {
-			return annotation.cfi.startsWith(currentItem.cfiBase);
-		});
+		const currentSectionAnnotations = annotations.filter(annotation => 
+			annotation.cfi.startsWith(currentItem.cfiBase)
+		);
 
 		if (currentSectionAnnotations.length === 0) return;
 
-		// Small delay to ensure DOM is ready
-		setTimeout(async () => {
-			try {
-				// Apply highlights to current section content
-				for (const annotation of currentSectionAnnotations) {
-					try {
-						await this.applyHighlightToContent(annotation);
-					} catch (error) {
-						console.warn('Failed to highlight annotation:', annotation.id, error);
-					}
-				}
-			} catch (error) {
-				console.error('Error displaying highlights in reader:', error);
+		setTimeout(() => this.applyHighlightsToPage(currentSectionAnnotations), HIGHLIGHT_DISPLAY_DELAY);
+	}
+
+	private async applyHighlightsToPage(annotations: AnnotationData[]): Promise<void> {
+		try {
+			for (const annotation of annotations) {
+				await this.applyHighlightToContent(annotation);
 			}
-		}, 100);
+		} catch (error) {
+			console.error('Error displaying highlights in reader:', error);
+		}
 	}
 
 	private async applyHighlightToContent(annotation: AnnotationData) {
@@ -601,33 +544,38 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
-	private applyHighlightStyling(range: Range, annotation: AnnotationData) {
+	private createHighlightSpan(annotation: AnnotationData): HTMLSpanElement {
+		const span = document.createElement('span');
+		span.style.backgroundColor = annotation.color;
+		span.style.opacity = '0.3';
+		span.style.cursor = 'pointer';
+		span.title = `${annotation.type}: ${annotation.text}`;
+		span.dataset.annotationId = annotation.id;
+		span.dataset.cfi = annotation.cfi;
+		
+		span.onclick = (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			this.showAnnotationDetails(annotation);
+		};
+		
+		return span;
+	}
+
+	private wrapRangeWithHighlight(range: Range, span: HTMLSpanElement): void {
 		try {
-			// Create a span element to wrap the highlighted text
-			const highlightSpan = document.createElement('span');
-			highlightSpan.style.backgroundColor = annotation.color;
-			highlightSpan.style.opacity = '0.3';
-			highlightSpan.style.cursor = 'pointer';
-			highlightSpan.title = `${annotation.type}: ${annotation.text}`;
-			highlightSpan.dataset.annotationId = annotation.id;
-			highlightSpan.dataset.cfi = annotation.cfi;
-			
-			// Add click handler to show annotation details
-			highlightSpan.onclick = (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				this.showAnnotationDetails(annotation);
-			};
-			
-			// Wrap the range content with the highlight span
-			try {
-				range.surroundContents(highlightSpan);
-			} catch (error) {
-				// If surroundContents fails, try extracting and inserting
-				const contents = range.extractContents();
-				highlightSpan.appendChild(contents);
-				range.insertNode(highlightSpan);
-			}
+			range.surroundContents(span);
+		} catch (error) {
+			const contents = range.extractContents();
+			span.appendChild(contents);
+			range.insertNode(span);
+		}
+	}
+
+	private applyHighlightStyling(range: Range, annotation: AnnotationData): void {
+		try {
+			const highlightSpan = this.createHighlightSpan(annotation);
+			this.wrapRangeWithHighlight(range, highlightSpan);
 		} catch (error) {
 			console.warn('Failed to apply highlight styling:', error);
 		}
@@ -637,6 +585,71 @@ export class EpubReaderView extends ItemView {
 		// Create a simple modal or tooltip showing annotation details
 		console.log('Annotation details:', annotation);
 		// TODO: Implement a proper modal/tooltip UI for annotation details
+	}
+
+	private async getAndValidateNoteFile(): Promise<TFile> {
+		const file = this.app.vault.getAbstractFileByPath(this.noteFilePath);
+		if (!file || !(file instanceof TFile)) {
+			throw new Error('Note file not found');
+		}
+		return file;
+	}
+
+	private findSectionIndex(lines: string[], sectionHeader: string): number {
+		const sectionPattern = new RegExp(`^\\s*${sectionHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
+		return lines.findIndex(line => sectionPattern.test(line));
+	}
+
+	private createSectionIfMissing(lines: string[], sectionHeader: string): number {
+		if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
+			lines.push('');
+		}
+		lines.push(sectionHeader, '');
+		return lines.length - 2;
+	}
+
+	private findInsertionIndex(lines: string[], sectionIndex: number): number {
+		let insertIndex = sectionIndex + 1;
+		
+		while (insertIndex < lines.length && 
+			   lines[insertIndex].trim() !== '' && 
+			   !lines[insertIndex].match(/^#+\s/)) {
+			insertIndex++;
+		}
+		
+		return insertIndex;
+	}
+
+	private insertHighlightWithSpacing(lines: string[], insertIndex: number, highlightEntry: string, sectionIndex: number): void {
+		if (insertIndex > sectionIndex + 1 && lines[insertIndex - 1].trim() !== '') {
+			lines.splice(insertIndex, 0, '');
+			insertIndex++;
+		}
+
+		lines.splice(insertIndex, 0, highlightEntry);
+		
+		if (insertIndex + 1 < lines.length && lines[insertIndex + 1].trim() !== '') {
+			lines.splice(insertIndex + 1, 0, '');
+		}
+	}
+
+	private async insertHighlightIntoNote(file: TFile, highlightData: HighlightData, annotationData: AnnotationData, config: any): Promise<void> {
+		const content = await this.app.vault.read(file);
+		const lines = content.split('\n');
+		
+		let sectionIndex = this.findSectionIndex(lines, config.section);
+		if (sectionIndex === -1) {
+			sectionIndex = this.createSectionIfMissing(lines, config.section);
+		}
+
+		const highlightText = this.applyTemplate(config.template, highlightData);
+		const annotationComment = `<!-- EPUB_ANNOTATION: ${JSON.stringify(annotationData)} -->`;
+		const fullHighlightEntry = `${highlightText}\n${annotationComment}`;
+		
+		const insertIndex = this.findInsertionIndex(lines, sectionIndex);
+		this.insertHighlightWithSpacing(lines, insertIndex, fullHighlightEntry, sectionIndex);
+		
+		await this.app.vault.modify(file, lines.join('\n'));
 	}
 
 	// ...existing code...
@@ -727,70 +740,76 @@ export class EpubReaderView extends ItemView {
 	private showHighlightOverlay(selection: Selection | null) {
 		if (!selection || !this.pluginInstance) return;
 		
-		this.hideHighlightOverlay(); // Remove any existing overlay
+		this.hideHighlightOverlay();
 		
 		const range = selection.getRangeAt(0);
 		const rect = range.getBoundingClientRect();
 		
-		// Create overlay element
 		this.highlightOverlay = document.body.createDiv('highlight-overlay');
 		
-		// Calculate position - show above selection, but handle edge cases
 		let top = rect.top + window.scrollY - 50;
 		let left = rect.left + window.scrollX;
 		
-		// Ensure overlay doesn't go off-screen
 		if (top < window.scrollY + 10) {
-			top = rect.bottom + window.scrollY + 10; // Show below if no space above
+			top = rect.bottom + window.scrollY + 10;
 		}
 		if (left + 200 > window.innerWidth) {
-			left = window.innerWidth - 210; // Adjust if too far right
+			left = window.innerWidth - 210;
 		}
 		if (left < 10) {
-			left = 10; // Ensure minimum left margin
+			left = 10;
 		}
 		
 		this.highlightOverlay.style.left = `${left}px`;
 		this.highlightOverlay.style.top = `${top}px`;
 		
-		// Create buttons for each highlight config
 		const configs = this.pluginInstance.settings.highlightConfigs;
 		configs.forEach((config: any) => {
 			const button = this.highlightOverlay!.createEl('button');
 			button.className = 'highlight-btn';
 			button.style.backgroundColor = config.color;
 			button.title = config.name;
-			button.textContent = config.name.charAt(0).toUpperCase(); // First letter as icon
+			button.textContent = config.name.charAt(0).toUpperCase();
 			
-			button.onclick = async (e) => {
-				e.stopPropagation();
-				
-				// Show loading state
-				button.textContent = '...';
-				button.disabled = true;
-				
-				try {
-					await this.saveHighlight(selection, config);
-					// Show success briefly
-					button.textContent = '✓';
-					button.style.backgroundColor = '#4caf50';
-					setTimeout(() => {
-						this.hideHighlightOverlay();
-					}, 500);
-				} catch (error) {
-					console.error('Error saving highlight:', error);
-					// Show error briefly
-					button.textContent = '✗';
-					button.style.backgroundColor = '#f44336';
-					setTimeout(() => {
-						// Reset button
-						button.textContent = config.name.charAt(0).toUpperCase();
-						button.style.backgroundColor = config.color;
-						button.disabled = false;
-					}, 1000);
-				}
-			};
+			button.onclick = (e) => this.handleHighlightButtonClick(e, selection, config, button);
 		});
+	}
+
+	private showLoadingState(button: HTMLButtonElement): void {
+		button.textContent = '...';
+		button.disabled = true;
+	}
+
+	private showSuccessState(button: HTMLButtonElement): void {
+		button.textContent = '✓';
+		button.style.backgroundColor = '#4caf50';
+		setTimeout(() => {
+			this.hideHighlightOverlay();
+		}, SUCCESS_FEEDBACK_DURATION);
+	}
+
+	private showErrorState(button: HTMLButtonElement, config: any): void {
+		button.textContent = '✗';
+		button.style.backgroundColor = '#f44336';
+		setTimeout(() => {
+			button.textContent = config.name.charAt(0).toUpperCase();
+			button.style.backgroundColor = config.color;
+			button.disabled = false;
+		}, ERROR_FEEDBACK_DURATION);
+	}
+
+	private async handleHighlightButtonClick(e: Event, selection: Selection, config: any, button: HTMLButtonElement): Promise<void> {
+		e.stopPropagation();
+		
+		this.showLoadingState(button);
+		
+		try {
+			await this.saveHighlight(selection, config);
+			this.showSuccessState(button);
+		} catch (error) {
+			console.error('Error saving highlight:', error);
+			this.showErrorState(button, config);
+		}
 	}
 
 	private hideHighlightOverlay() {
