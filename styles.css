@@ -6,3 +6,26 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+/* Highlight config container styling */
+.highlight-config {
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 12px;
+	margin-bottom: 12px;
+}
+
+.highlight-config h4 {
+	margin: 0 0 8px 0;
+	color: var(--text-accent);
+}
+
+.highlight-config .setting-item {
+	border: none;
+	padding: 4px 0;
+}
+
+.highlight-config .setting-item:last-child {
+	margin-bottom: 0;
+}
