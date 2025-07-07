@@ -4,6 +4,23 @@ import ePub from 'epubjs';
 
 export const EPUB_READER_VIEW_TYPE = 'epub-reader-view';
 
+interface HighlightData {
+	text: string;
+	cfi: string;
+	color: string;
+	timestamp: string;
+	section: number;
+}
+
+interface AnnotationData {
+	id: string;
+	cfi: string;
+	text: string;
+	color: string;
+	timestamp: number;
+	type: string;
+}
+
 export class EpubReaderView extends ItemView {
 	private epubPath: string = '';
 	private noteFilePath: string = '';
@@ -181,6 +198,12 @@ export class EpubReaderView extends ItemView {
 			// Update navigation state
 			this.updateNavigationState();
 			
+			// Load and display existing highlights for this page
+			if (this.noteFilePath) {
+				const annotations = await this.loadExistingHighlights();
+				await this.displayHighlightsInReader(annotations);
+			}
+			
 			// Save progress
 			await this.saveProgress();
 			
@@ -289,6 +312,334 @@ export class EpubReaderView extends ItemView {
 			console.error('Error saving progress:', error);
 		}
 	}
+
+	private async saveHighlight(selection: Selection, config: any) {
+		if (!this.noteFilePath || !this.pluginInstance || !this.spineItems) {
+			console.error('Cannot save highlight: missing note file path, plugin instance, or spine items');
+			throw new Error('Missing required components for saving highlight');
+		}
+
+		try {
+			const range = selection.getRangeAt(0);
+			const selectedText = selection.toString().trim();
+			
+			if (!selectedText) {
+				console.warn('No text selected for highlighting');
+				throw new Error('No text selected');
+			}
+
+			if (selectedText.length > 5000) {
+				console.warn('Selected text is very long, truncating to 5000 characters');
+			}
+
+			// Get the current spine item
+			const currentItem = this.spineItems[this.currentIndex];
+			if (!currentItem) {
+				console.error('Current spine item not found');
+				throw new Error('Current section not available');
+			}
+
+			// Generate CFI from the range using the Section's cfiFromRange method
+			let cfi: string;
+			try {
+				// Load the section to access cfiFromRange method
+				await currentItem.load(this.book.load.bind(this.book));
+				cfi = currentItem.cfiFromRange(range);
+				
+				if (!cfi || typeof cfi !== 'string') {
+					throw new Error('Invalid CFI generated');
+				}
+				
+				console.debug('Generated CFI for highlight:', cfi);
+			} catch (error) {
+				console.error('Error generating CFI:', error);
+				throw new Error('Failed to generate position reference');
+			} finally {
+				currentItem.unload();
+			}
+
+			// Get the note file
+			const file = this.app.vault.getAbstractFileByPath(this.noteFilePath);
+			if (!file || !(file instanceof TFile)) {
+				console.error('Note file not found:', this.noteFilePath);
+				throw new Error('Note file not found');
+			}
+
+			// Remove any existing highlight at this CFI to prevent duplicates
+			await this.removeExistingHighlight(cfi);
+
+			// Read current file content (after potential removal)
+			const content = await this.app.vault.read(file);
+			
+			// Create highlight entry
+			const timestamp = new Date().toISOString();
+			const timestampMs = Date.now();
+			const highlightId = timestampMs.toString();
+			const highlightData: HighlightData = {
+				text: selectedText.length > 5000 ? selectedText.substring(0, 5000) + '...' : selectedText,
+				cfi: cfi,
+				color: config.color,
+				timestamp: timestamp,
+				section: this.currentIndex + 1
+			};
+
+			// Create annotation comment with structured data
+			const annotationData = {
+				id: highlightId,
+				cfi: cfi,
+				text: highlightData.text,
+				color: config.color,
+				timestamp: timestampMs,
+				type: config.name.toLowerCase()
+			};
+			const annotationComment = `<!-- EPUB_ANNOTATION: ${JSON.stringify(annotationData)} -->`;
+
+			// Apply template to create the highlight text
+			let highlightText = config.template
+				.replace(/\{\{text\}\}/g, highlightData.text)
+				.replace(/\{\{cfi\}\}/g, cfi)
+				.replace(/\{\{timestamp\}\}/g, timestamp)
+				.replace(/\{\{section\}\}/g, (this.currentIndex + 1).toString())
+				.replace(/\{\{date\}\}/g, new Date().toLocaleDateString())
+				.replace(/\{\{time\}\}/g, new Date().toLocaleTimeString());
+
+			// Combine highlight text with annotation comment below
+			const fullHighlightEntry = `${highlightText}\n${annotationComment}`;
+
+			// Find or create the section in the markdown file
+			const lines = content.split('\n');
+			let sectionIndex = -1;
+			
+			// Look for the configured section header (support for different heading levels)
+			const sectionPattern = new RegExp(`^\\s*${config.section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`);
+			for (let i = 0; i < lines.length; i++) {
+				if (sectionPattern.test(lines[i])) {
+					sectionIndex = i;
+					break;
+				}
+			}
+
+			// If section doesn't exist, create it at the end
+			if (sectionIndex === -1) {
+				// Add empty line before section if the file doesn't end with empty line
+				if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
+					lines.push('');
+				}
+				lines.push(config.section, '');
+				sectionIndex = lines.length - 2; // Point to the section header line
+			}
+
+			// Insert the highlight after the section header
+			// Find the appropriate insertion point - after existing content but before next section
+			let insertIndex = sectionIndex + 1;
+			
+			// Skip any existing content in this section
+			while (insertIndex < lines.length && 
+				   lines[insertIndex].trim() !== '' && 
+				   !lines[insertIndex].match(/^#+\s/)) {
+				insertIndex++;
+			}
+
+			// Add empty line before if there's content above (but not immediately after header)
+			if (insertIndex > sectionIndex + 1 && lines[insertIndex - 1].trim() !== '') {
+				lines.splice(insertIndex, 0, '');
+				insertIndex++;
+			}
+
+			// Insert the highlight entry
+			lines.splice(insertIndex, 0, fullHighlightEntry);
+			
+			// Add empty line after if there's content below
+			if (insertIndex + 1 < lines.length && lines[insertIndex + 1].trim() !== '') {
+				lines.splice(insertIndex + 1, 0, '');
+			}
+
+			// Write back to file
+			await this.app.vault.modify(file, lines.join('\n'));
+			console.log('Highlight saved successfully:', highlightData);
+
+		} catch (error) {
+			console.error('Error saving highlight:', error);
+			throw error; // Re-throw to show user feedback
+		}
+	}
+
+	private async removeExistingHighlight(cfi: string) {
+		if (!this.noteFilePath) return;
+
+		try {
+			const file = this.app.vault.getAbstractFileByPath(this.noteFilePath);
+			if (!file || !(file instanceof TFile)) {
+				return;
+			}
+
+			const content = await this.app.vault.read(file);
+			const lines = content.split('\n');
+			
+			// Find and remove existing annotation with same CFI
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i];
+				if (line.includes('<!-- EPUB_ANNOTATION:') && line.includes(`"cfi":"${cfi}"`)) {
+					// Remove the annotation comment and the preceding highlight text
+					lines.splice(i - 1, 2); // Remove highlight text and comment
+					// Also remove empty line if present before the highlight
+					if (i - 2 >= 0 && lines[i - 2].trim() === '') {
+						lines.splice(i - 2, 1);
+					}
+					break;
+				}
+			}
+
+			await this.app.vault.modify(file, lines.join('\n'));
+		} catch (error) {
+			console.error('Error removing existing highlight:', error);
+		}
+	}
+
+	private async loadExistingHighlights(): Promise<AnnotationData[]> {
+		if (!this.noteFilePath) return [];
+
+		try {
+			const file = this.app.vault.getAbstractFileByPath(this.noteFilePath);
+			if (!file || !(file instanceof TFile)) {
+				return [];
+			}
+
+			const content = await this.app.vault.read(file);
+			const annotations: AnnotationData[] = [];
+			
+			// Parse annotation comments
+			const annotationRegex = /<!-- EPUB_ANNOTATION: (.+?) -->/g;
+			let match;
+			
+			while ((match = annotationRegex.exec(content)) !== null) {
+				try {
+					const annotationData = JSON.parse(match[1]) as AnnotationData;
+					annotations.push(annotationData);
+				} catch (error) {
+					console.warn('Failed to parse annotation:', match[1], error);
+				}
+			}
+			
+			console.debug('Loaded existing highlights:', annotations.length);
+			return annotations;
+		} catch (error) {
+			console.error('Error loading existing highlights:', error);
+			return [];
+		}
+	}
+
+	private async displayHighlightsInReader(annotations: AnnotationData[]) {
+		if (!this.spineItems || !annotations.length) return;
+		
+		const currentItem = this.spineItems[this.currentIndex];
+		if (!currentItem) return;
+
+		// Filter annotations for current section
+		const currentSectionAnnotations = annotations.filter(annotation => {
+			return annotation.cfi.startsWith(currentItem.cfiBase);
+		});
+
+		if (currentSectionAnnotations.length === 0) return;
+
+		// Small delay to ensure DOM is ready
+		setTimeout(async () => {
+			try {
+				// Apply highlights to current section content
+				for (const annotation of currentSectionAnnotations) {
+					try {
+						await this.applyHighlightToContent(annotation);
+					} catch (error) {
+						console.warn('Failed to highlight annotation:', annotation.id, error);
+					}
+				}
+			} catch (error) {
+				console.error('Error displaying highlights in reader:', error);
+			}
+		}, 100);
+	}
+
+	private async applyHighlightToContent(annotation: AnnotationData) {
+		const contentDiv = this.containerEl.querySelector('#epub-content');
+		if (!contentDiv) return;
+
+		try {
+			// Create a simple text-based highlight by finding and wrapping the text
+			// This is a simplified approach since we have the text content directly
+			const walker = document.createTreeWalker(
+				contentDiv,
+				NodeFilter.SHOW_TEXT,
+				null
+			);
+
+			const textNodes: Text[] = [];
+			let node;
+			while (node = walker.nextNode()) {
+				textNodes.push(node as Text);
+			}
+
+			// Find text nodes that contain the annotation text
+			for (const textNode of textNodes) {
+				const nodeText = textNode.textContent || '';
+				const annotationText = annotation.text;
+				
+				if (nodeText.includes(annotationText)) {
+					const startIndex = nodeText.indexOf(annotationText);
+					if (startIndex !== -1) {
+						// Split the text node and wrap the matching part
+						const range = document.createRange();
+						range.setStart(textNode, startIndex);
+						range.setEnd(textNode, startIndex + annotationText.length);
+						
+						this.applyHighlightStyling(range, annotation);
+						break; // Only highlight the first occurrence
+					}
+				}
+			}
+		} catch (error) {
+			console.warn('Error applying highlight to content:', error);
+		}
+	}
+
+	private applyHighlightStyling(range: Range, annotation: AnnotationData) {
+		try {
+			// Create a span element to wrap the highlighted text
+			const highlightSpan = document.createElement('span');
+			highlightSpan.style.backgroundColor = annotation.color;
+			highlightSpan.style.opacity = '0.3';
+			highlightSpan.style.cursor = 'pointer';
+			highlightSpan.title = `${annotation.type}: ${annotation.text}`;
+			highlightSpan.dataset.annotationId = annotation.id;
+			highlightSpan.dataset.cfi = annotation.cfi;
+			
+			// Add click handler to show annotation details
+			highlightSpan.onclick = (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.showAnnotationDetails(annotation);
+			};
+			
+			// Wrap the range content with the highlight span
+			try {
+				range.surroundContents(highlightSpan);
+			} catch (error) {
+				// If surroundContents fails, try extracting and inserting
+				const contents = range.extractContents();
+				highlightSpan.appendChild(contents);
+				range.insertNode(highlightSpan);
+			}
+		} catch (error) {
+			console.warn('Failed to apply highlight styling:', error);
+		}
+	}
+
+	private showAnnotationDetails(annotation: AnnotationData) {
+		// Create a simple modal or tooltip showing annotation details
+		console.log('Annotation details:', annotation);
+		// TODO: Implement a proper modal/tooltip UI for annotation details
+	}
+
+	// ...existing code...
 
 	private handleNext() {
 		console.log('handleNext called');
@@ -411,11 +762,33 @@ export class EpubReaderView extends ItemView {
 			button.title = config.name;
 			button.textContent = config.name.charAt(0).toUpperCase(); // First letter as icon
 			
-			button.onclick = (e) => {
+			button.onclick = async (e) => {
 				e.stopPropagation();
-				console.log(`Highlight with ${config.name}:`, selection.toString());
-				// TODO: Implement actual highlighting functionality
-				this.hideHighlightOverlay();
+				
+				// Show loading state
+				button.textContent = '...';
+				button.disabled = true;
+				
+				try {
+					await this.saveHighlight(selection, config);
+					// Show success briefly
+					button.textContent = '✓';
+					button.style.backgroundColor = '#4caf50';
+					setTimeout(() => {
+						this.hideHighlightOverlay();
+					}, 500);
+				} catch (error) {
+					console.error('Error saving highlight:', error);
+					// Show error briefly
+					button.textContent = '✗';
+					button.style.backgroundColor = '#f44336';
+					setTimeout(() => {
+						// Reset button
+						button.textContent = config.name.charAt(0).toUpperCase();
+						button.style.backgroundColor = config.color;
+						button.disabled = false;
+					}, 1000);
+				}
 			};
 		});
 	}
@@ -430,5 +803,33 @@ export class EpubReaderView extends ItemView {
 	async onClose() {
 		// Clean up any resources
 		this.hideHighlightOverlay();
+	}
+
+	private async navigateToHighlight(cfi: string) {
+		try {
+			await this.navigateToCfi(cfi);
+			// TODO: In future, we could also scroll to the exact position within the page
+			// using the CFI to identify the specific range and scroll to it
+		} catch (error) {
+			console.error('Error navigating to highlight:', error);
+		}
+	}
+
+	private clearDisplayedHighlights() {
+		const contentDiv = this.containerEl.querySelector('#epub-content');
+		if (!contentDiv) return;
+
+		// Remove all highlight spans
+		const highlightSpans = contentDiv.querySelectorAll('span[data-annotation-id]');
+		highlightSpans.forEach(span => {
+			// Unwrap the span, keeping only its text content
+			const parent = span.parentNode;
+			if (parent) {
+				while (span.firstChild) {
+					parent.insertBefore(span.firstChild, span);
+				}
+				parent.removeChild(span);
+			}
+		});
 	}
 }

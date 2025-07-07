@@ -22,7 +22,19 @@ export const DEFAULT_SETTINGS: EpubReaderSettings = {
 			name: 'Important',
 			color: '#ffeb3b',
 			section: '## Highlights',
-			template: '> {{text}}'
+			template: '> {{text}} ^{{cfi}}'
+		},
+		{
+			name: 'Question',
+			color: '#ff9800',
+			section: '## Questions',
+			template: '**Q**: {{text}}\n**A**: \n\n^{{cfi}}'
+		},
+		{
+			name: 'Note',
+			color: '#2196f3',
+			section: '## Notes',
+			template: '- {{text}} ^{{cfi}}'
 		}
 	]
 }
