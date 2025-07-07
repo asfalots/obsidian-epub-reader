@@ -29,3 +29,40 @@ If your plugin does not need CSS, delete this file.
 .highlight-config .setting-item:last-child {
 	margin-bottom: 0;
 }
+
+/* Highlight overlay styling */
+.highlight-overlay {
+	position: absolute;
+	z-index: 1000;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+	padding: 8px;
+	display: flex;
+	gap: 6px;
+	pointer-events: auto;
+}
+
+.highlight-overlay .highlight-btn {
+	border: none;
+	border-radius: 4px;
+	width: 32px;
+	height: 32px;
+	cursor: pointer;
+	transition: transform 0.1s ease;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 14px;
+	color: var(--text-on-accent);
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.highlight-overlay .highlight-btn:hover {
+	transform: scale(1.1);
+}
+
+.highlight-overlay .highlight-btn:active {
+	transform: scale(0.95);
+}

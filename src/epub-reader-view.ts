@@ -13,6 +13,7 @@ export class EpubReaderView extends ItemView {
 	private spineItems: any = null;
 	private currentIndex: number = 0;
 	private currentCfi: string = '';
+	private highlightOverlay: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -47,6 +48,17 @@ export class EpubReaderView extends ItemView {
 			}
 		});
 		this.containerEl.focus();
+		
+		// Add text selection handling
+		this.containerEl.addEventListener('mouseup', this.handleTextSelection.bind(this));
+		this.containerEl.addEventListener('keyup', this.handleTextSelection.bind(this));
+		
+		// Hide overlay when clicking outside
+		document.addEventListener('click', (e) => {
+			if (this.highlightOverlay && !this.highlightOverlay.contains(e.target as Node)) {
+				this.hideHighlightOverlay();
+			}
+		});
 	}
 
 	getState() {
@@ -335,7 +347,76 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
+	private handleTextSelection(event: Event) {
+		// Small delay to ensure selection is finalized
+		setTimeout(() => {
+			const selection = window.getSelection();
+			const selectedText = selection?.toString().trim();
+			
+			if (selectedText && selectedText.length > 0) {
+				this.showHighlightOverlay(selection);
+			} else {
+				this.hideHighlightOverlay();
+			}
+		}, 10);
+	}
+
+	private showHighlightOverlay(selection: Selection | null) {
+		if (!selection || !this.pluginInstance) return;
+		
+		this.hideHighlightOverlay(); // Remove any existing overlay
+		
+		const range = selection.getRangeAt(0);
+		const rect = range.getBoundingClientRect();
+		
+		// Create overlay element
+		this.highlightOverlay = document.body.createDiv('highlight-overlay');
+		
+		// Calculate position - show above selection, but handle edge cases
+		let top = rect.top + window.scrollY - 50;
+		let left = rect.left + window.scrollX;
+		
+		// Ensure overlay doesn't go off-screen
+		if (top < window.scrollY + 10) {
+			top = rect.bottom + window.scrollY + 10; // Show below if no space above
+		}
+		if (left + 200 > window.innerWidth) {
+			left = window.innerWidth - 210; // Adjust if too far right
+		}
+		if (left < 10) {
+			left = 10; // Ensure minimum left margin
+		}
+		
+		this.highlightOverlay.style.left = `${left}px`;
+		this.highlightOverlay.style.top = `${top}px`;
+		
+		// Create buttons for each highlight config
+		const configs = this.pluginInstance.settings.highlightConfigs;
+		configs.forEach((config: any) => {
+			const button = this.highlightOverlay!.createEl('button');
+			button.className = 'highlight-btn';
+			button.style.backgroundColor = config.color;
+			button.title = config.name;
+			button.textContent = config.name.charAt(0).toUpperCase(); // First letter as icon
+			
+			button.onclick = (e) => {
+				e.stopPropagation();
+				console.log(`Highlight with ${config.name}:`, selection.toString());
+				// TODO: Implement actual highlighting functionality
+				this.hideHighlightOverlay();
+			};
+		});
+	}
+
+	private hideHighlightOverlay() {
+		if (this.highlightOverlay) {
+			this.highlightOverlay.remove();
+			this.highlightOverlay = null;
+		}
+	}
+
 	async onClose() {
 		// Clean up any resources
+		this.hideHighlightOverlay();
 	}
 }
