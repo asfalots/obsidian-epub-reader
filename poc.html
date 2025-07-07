@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>EPUB.js CFI POC</title>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+  <style>
+    #content { border: 1px solid #ccc; padding: 1em; min-height: 300px; }
+    #controls { margin-top: 1em; }
+    button { margin: 0 0.5em; }
+    input { width: 60%; }
+  </style>
+</head>
+<body>
+  <div id="content"></div>
+  <div id="controls">
+    <button id="prev">Previous</button>
+    <input id="cfi" type="text" readonly />
+    <button id="next">Next</button>
+  </div>
+  <script type="module">
+    // --- Minimal TypeScript-like JS for browser ---
+    const epubUrl = "https://s3.amazonaws.com/moby-dick/moby-dick.epub";
+    let book, rendition, spineItems, currentIndex = 0, currentCfi = "";
+
+    // Function: Render current spine item and update CFI
+    async function renderPage(index) {
+      console.log('renderPage called with index:', index);
+      if (!spineItems) {
+        console.error('spineItems is undefined');
+        return;
+      }
+      if (index < 0 || index >= spineItems.length) {
+        console.warn('Index out of bounds:', index);
+        return;
+      }
+      currentIndex = index;
+      const item = spineItems[index];
+      console.log('Loading spine item:', item);
+      try {
+        await item.load(book.load.bind(book));
+        const text = await item.render();
+        const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+        const body = bodyMatch ? bodyMatch[1] : text;
+        document.getElementById('content').innerHTML = body;
+        currentCfi = item.cfiBase;
+        document.getElementById('cfi').value = currentCfi;
+        console.log('Rendered html for index', index, 'CFI:', currentCfi);
+      } catch (e) {
+        console.error('Error rendering page:', e);
+      } finally {
+        item.unload();
+      }
+    }
+
+    // Function: Handle next/prev
+    function handleNext() { 
+      console.log('handleNext called');
+      if (currentIndex < spineItems.length - 1) renderPage(currentIndex + 1); 
+    }
+    function handlePrev() { 
+      console.log('handlePrev called');
+      if (currentIndex > 0) renderPage(currentIndex - 1); 
+    }
+
+    // Init
+    (async function() {
+      console.log('Initializing book...');
+      try {
+        // Fetch as ArrayBuffer
+        const response = await fetch(epubUrl);
+        if (!response.ok) throw new Error('Failed to fetch epub: ' + response.status);
+        const arrayBuffer = await response.arrayBuffer();
+        console.log('EPUB fetched as ArrayBuffer, size:', arrayBuffer.byteLength);
+
+        book = ePub(arrayBuffer);
+        console.log('Book object created:', book);
+        let readyResolved = false;
+        const readyPromise = book.ready.then(() => { readyResolved = true; });
+        // Timeout after 5 seconds if not resolved
+        await Promise.race([
+          readyPromise,
+          new Promise((_, reject) => setTimeout(() => {
+            if (!readyResolved) reject(new Error('book.ready timeout'));
+          }, 5000))
+        ]);
+        console.log('Book loaded:', book);
+        spineItems = book.spine && book.spine.spineItems;
+        if (!spineItems || spineItems.length === 0) {
+          console.error('No spine items found!');
+          return;
+        }
+        console.log('Spine items:', spineItems);
+        renderPage(0);
+        document.getElementById('next').onclick = handleNext;
+        document.getElementById('prev').onclick = handlePrev;
+      } catch (err) {
+        console.error('Error loading book:', err);
+      }
+    })();
+  </script>
+</body>
+</html>
