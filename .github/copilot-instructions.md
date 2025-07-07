@@ -13,7 +13,7 @@ In the configuration of the plugin, we can associate the color and the sections.
 # Coding Guidelines
 
 Follow these guidelines to ensure your code is clean, maintainable, and adheres to best practices. Remember, less code is better. Lines of code = Debt.
-
+Always use the right log level and respect standard logging practices. Use `console.debug` for debugging, `console.warn` for warnings, and `console.error` for errors.
 # Key Mindsets
 
 **1** **Simplicity**: Write simple and straightforward code.

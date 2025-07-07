@@ -1,5 +1,5 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
-import type MyPlugin from '../main';
+import type EpubReaderPlugin from '../main';
 
 export interface EpubReaderSettings {
 	epubPropertyName: string;
@@ -10,9 +10,9 @@ export const DEFAULT_SETTINGS: EpubReaderSettings = {
 }
 
 export class EpubReaderSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+	plugin: EpubReaderPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: EpubReaderPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
