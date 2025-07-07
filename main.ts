@@ -30,7 +30,7 @@ export default class EpubReaderPlugin extends Plugin {
 					if (epubProperty) {
 						if (!checking) {
 							console.log('EPUB Reader command triggered');
-							this.activateEpubReaderView();
+							this.activateEpubReaderView(epubProperty);
 						}
 						return true;
 					}
@@ -57,21 +57,56 @@ export default class EpubReaderPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	async activateEpubReaderView() {
+	async activateEpubReaderView(epubProperty: string) {
 		console.log('Activating EPUB reader view...');
 		const { workspace } = this.app;
+
+		// Resolve the EPUB path
+		const epubPath = this.resolveEpubPath(epubProperty);
+		console.log('Resolved EPUB path:', epubPath);
 
 		let leaf = workspace.getLeavesOfType(EPUB_READER_VIEW_TYPE)[0];
 
 		if (!leaf) {
 			console.log('Creating new EPUB reader leaf in main workspace...');
 			leaf = workspace.getLeaf();
-			await leaf.setViewState({ type: EPUB_READER_VIEW_TYPE, active: true });
+			await leaf.setViewState({ 
+				type: EPUB_READER_VIEW_TYPE, 
+				active: true,
+				state: { epubPath }
+			});
 		} else {
 			console.log('Found existing EPUB reader leaf');
+			// Update the existing view with new EPUB path
+			const view = leaf.view as EpubReaderView;
+			if (view && view.setEpubPath) {
+				view.setEpubPath(epubPath);
+			}
 		}
 
 		workspace.revealLeaf(leaf);
 		console.log('EPUB reader view activated');
+	}
+
+	resolveEpubPath(epubProperty: string): string {
+		// Check if it's a wiki link [[filename]]
+		const wikiLinkMatch = epubProperty.match(/^\[\[(.+)\]\]$/);
+		
+		if (wikiLinkMatch) {
+			const linkPath = wikiLinkMatch[1];
+			console.log('Found wiki link:', linkPath);
+			
+			// Try to find the file in the vault
+			const file = this.app.metadataCache.getFirstLinkpathDest(linkPath, '');
+			if (file) {
+				return file.path;
+			} else {
+				console.warn('Wiki link file not found:', linkPath);
+				return linkPath; // Return the raw link path if file not found
+			}
+		}
+		
+		// Return as-is if it's not a wiki link (assume it's a direct path)
+		return epubProperty;
 	}
 }
