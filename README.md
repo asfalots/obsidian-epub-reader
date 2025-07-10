@@ -1,94 +1,86 @@
-# Obsidian Sample Plugin
+# EPUB Annotator
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+An advanced EPUB reading plugin for Obsidian that seamlessly integrates e-book reading with note-taking and annotation workflows.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+## Features
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+- **EPUB Reading**: Read EPUB files directly within Obsidian using the powerful EPUB.js library
+- **Smart Highlighting**: Select and highlight text with multiple color options that automatically save to your notes
+- **Note Integration**: Associate EPUB files with markdown notes using Obsidian properties
+- **Structured Annotations**: Highlights are saved in human-readable format with configurable templates
+- **CFI-based Positioning**: Uses EPUB Canonical Fragment Identifiers for precise text location tracking
+- **Color-coded Sections**: Map different highlight colors to specific sections in your notes
+- **Persistent Highlights**: All highlights are preserved and reloaded when reopening EPUBs
 
-## First time developing plugins?
+## How to Use
 
-Quick starting guide for new plugin devs:
+### 1. Install and Enable
+1. In Obsidian, open **Settings → Community Plugins → Browse**.
+2. Search for **EPUB Annotator** and click **Install**.
+3. Click **Enable** to activate the plugin.
+4. Configure highlight colors and note sections in the plugin settings.
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+### 2. Reading EPUBs
+1. Open an EPUB file in Obsidian
+2. The plugin will render the EPUB in a custom reader view
+3. Navigate through pages using the built-in controls
 
-## Releasing new releases
+### 3. Creating Highlights
+1. Select any text in the EPUB reader
+2. Choose a highlight color from the overlay menu
+3. The highlight is automatically saved to the associated markdown note
+4. Add optional annotation text to enhance your notes
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+### 4. Note Association
+Configure in plugin settings how EPUB files are linked to markdown notes using Obsidian properties. This allows seamless integration between your reading and note-taking workflow.
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+## Configuration
 
-## Adding your plugin to the community plugin list
+### Highlight Colors and Sections
+In the plugin settings, you can:
+- Define custom highlight colors
+- Map each color to a specific section in your notes
+- Customize annotation templates with variables like `{{text}}`, `{{cfi}}`, `{{timestamp}}`
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### Default Highlight Types
+- **Important** (Yellow): For key passages and important information
+- **Question** (Orange): For content that raises questions or needs clarification  
+- **Note** (Blue): For general observations and thoughts
 
-## How to use
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## Technical Details
 
-## Manually installing the plugin
+### EPUB.js Integration
+This plugin uses [EPUB.js](http://epubjs.org/documentation/0.3/) for EPUB parsing and rendering. Key features:
+- CFI (Canonical Fragment Identifier) for precise text positioning
+- Section-based rendering for performance
+- Cross-platform compatibility
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint .\src\`
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+### Annotation Storage
+Highlights are stored as HTML comments in markdown files with structured JSON data:
+```html
+> Highlighted text appears here
+<!-- EPUB_ANNOTATION: {"id":"123","cfi":"epubcfi(...)","text":"...","color":"#4caf50"} -->
 ```
 
-If you have multiple URLs, you can also do:
+## Contributing
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
+Contributions are welcome! Please feel free to submit issues, feature requests, or pull requests.
 
-## API Documentation
+### Reporting Issues
+When reporting bugs, please include:
+- Obsidian version
+- Plugin version  
+- EPUB file details (if relevant)
+- Steps to reproduce
+- Expected vs actual behavior
 
-See https://github.com/obsidianmd/obsidian-api
+## License
+
+MIT License - see LICENSE file for details.
+
+## Acknowledgments
+
+- Built with [EPUB.js](https://github.com/futurepress/epub.js/) for EPUB parsing and rendering
+- Developed for the [Obsidian](https://obsidian.md) knowledge management platform
+- Inspired by the need for seamless reading and note-taking integration
