@@ -399,42 +399,67 @@ export class EpubReaderView extends ItemView {
 	/**
 	 * Process HTML content to resolve image URLs and other resources
 	 */
-	private processHtmlContent(htmlContent: string): string {
+	private async processHtmlContent(htmlContent: string): Promise<string> {
 		let processedContent = htmlContent;
 		
+		// Debug: Log available resources in manifest
+		if (this.book && this.book.resources && this.book.resources.manifest) {
+			console.debug('Available resources in manifest:');
+			for (const [path, resource] of Object.entries(this.book.resources.manifest)) {
+				const resourceItem = resource as any;
+				if (resourceItem.type && resourceItem.type.startsWith('image/')) {
+					console.debug('Image resource:', path, 'href:', resourceItem.href, 'type:', resourceItem.type);
+				}
+			}
+		}
+		
 		// Process image src attributes
-		processedContent = processedContent.replace(/<img[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi, (match, src) => {
+		const imageMatches = [...processedContent.matchAll(/<img[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi)];
+		for (const match of imageMatches) {
+			const [fullMatch, src] = match;
+			
 			// Skip absolute URLs and data URLs
-			if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('app://')) {
-				return match;
+			if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:')) {
+				continue;
 			}
 			
 			try {
-				// Resolve relative URL using epub.js book.resolve
-				const resolvedUrl = this.book.resolve(src);
-				console.debug('Resolved image URL:', src, '->', resolvedUrl);
-				return match.replace(src, resolvedUrl);
+				let resolvedUrl = null;
+				
+				// First try to resolve the path using book.resolve() to get the absolute path
+				if (this.book && this.book.resolve) {
+					const absolutePath = this.book.resolve(src);
+					console.debug('Resolved absolute path:', src, '->', absolutePath);
+					
+					// Then try to create URL using the resolved path
+					if (this.book.resources && this.book.resources.createUrl) {
+						try {
+							resolvedUrl = await this.book.resources.createUrl(absolutePath);
+							console.debug('Created URL from absolute path:', absolutePath, '->', resolvedUrl);
+						} catch (e1) {
+							console.debug('createUrl failed for absolute path:', absolutePath, e1.message);
+							
+							// Fallback: try with original relative path
+							try {
+								resolvedUrl = await this.book.resources.createUrl(src);
+								console.debug('Created URL from relative path:', src, '->', resolvedUrl);
+							} catch (e2) {
+								console.debug('createUrl failed for relative path:', src, e2.message);
+							}
+						}
+					}
+				}
+				
+				if (resolvedUrl) {
+					console.debug('Successfully resolved image URL:', src, '->', resolvedUrl);
+					processedContent = processedContent.replace(fullMatch, fullMatch.replace(src, resolvedUrl));
+				} else {
+					console.warn('Could not resolve image URL:', src);
+				}
 			} catch (error) {
 				console.warn('Failed to resolve image URL:', src, error);
-				return match;
 			}
-		});
-		
-		// Process other resource URLs (audio, video, etc.) if needed
-		processedContent = processedContent.replace(/<(audio|video)[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi, (match, tag, src) => {
-			if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('app://')) {
-				return match;
-			}
-			
-			try {
-				const resolvedUrl = this.book.resolve(src);
-				console.debug('Resolved', tag, 'URL:', src, '->', resolvedUrl);
-				return match.replace(src, resolvedUrl);
-			} catch (error) {
-				console.warn('Failed to resolve', tag, 'URL:', src, error);
-				return match;
-			}
-		});
+		}
 		
 		return processedContent;
 	}
@@ -469,7 +494,7 @@ export class EpubReaderView extends ItemView {
 				const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
 				const rawContent = bodyMatch ? bodyMatch[1] : text;
 				// Process HTML content to resolve image URLs and other resources
-				this.currentChapterContent = this.processHtmlContent(rawContent);
+				this.currentChapterContent = await this.processHtmlContent(rawContent);
 			}
 			
 			// Setup pagination and render current page
@@ -830,7 +855,7 @@ export class EpubReaderView extends ItemView {
 			const text = await item.render();
 			const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
 			const rawContent = bodyMatch ? bodyMatch[1] : text;
-			this.currentChapterContent = this.processHtmlContent(rawContent);
+			this.currentChapterContent = await this.processHtmlContent(rawContent);
 			
 			// Calculate total pages for this chapter
 			const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
