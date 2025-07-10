@@ -34,6 +34,13 @@ export class EpubReaderView extends ItemView {
 	private currentCfi: string = '';
 	private highlightOverlay: HTMLElement | null = null;
 	private epubStylesheets: string = ''; // Cache for extracted CSS
+	
+	// Pagination properties
+	private currentPage: number = 0;
+	private totalPages: number = 0;
+	private currentChapterContent: string = '';
+	private viewportWidth: number = 0;
+	private resizeTimeout: NodeJS.Timeout | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -72,6 +79,24 @@ export class EpubReaderView extends ItemView {
 		// Add text selection handling
 		this.containerEl.addEventListener('mouseup', this.handleTextSelection.bind(this));
 		this.containerEl.addEventListener('keyup', this.handleTextSelection.bind(this));
+		
+		// Add resize observer to recalculate pagination when viewport changes
+		const resizeObserver = new ResizeObserver(() => {
+			if (this.currentChapterContent) {
+				// Debounce resize events
+				if (this.resizeTimeout) {
+					clearTimeout(this.resizeTimeout);
+				}
+				this.resizeTimeout = setTimeout(() => {
+					this.setupPaginationAndRender();
+				}, 300);
+			}
+		});
+		
+		const contentDiv = this.containerEl.querySelector('#epub-content');
+		if (contentDiv) {
+			resizeObserver.observe(contentDiv);
+		}
 		
 		// Hide overlay when clicking outside
 		document.addEventListener('click', (e) => {
@@ -161,7 +186,7 @@ export class EpubReaderView extends ItemView {
 			// Navigate to saved position or start from beginning
 			if (this.savedProgress) {
 				console.log('Navigating to saved CFI:', this.savedProgress);
-				await this.navigateToCfi(this.savedProgress);
+				await this.navigateToSavedProgress(this.savedProgress);
 			} else {
 				console.log('Starting at first chapter');
 				await this.renderPage(0);
@@ -337,11 +362,12 @@ export class EpubReaderView extends ItemView {
 				const trimmed = s.trim();
 				// Don't scope pseudo-elements and already scoped selectors
 				if (trimmed.includes('.epub-reader-content') || 
+					trimmed.includes('.epub-pagination-wrapper') ||
 					trimmed.startsWith(':') || 
 					trimmed.startsWith('::')) {
 					return trimmed;
 				}
-				return `.epub-reader-content ${trimmed}`;
+				return `.epub-pagination-wrapper ${trimmed}`;
 			}).join(', ');
 			
 			return `${selectors} {`;
@@ -370,8 +396,51 @@ export class EpubReaderView extends ItemView {
 		});
 	}
 
-	private async renderPage(index: number) {
-		console.log('renderPage called with index:', index);
+	/**
+	 * Process HTML content to resolve image URLs and other resources
+	 */
+	private processHtmlContent(htmlContent: string): string {
+		let processedContent = htmlContent;
+		
+		// Process image src attributes
+		processedContent = processedContent.replace(/<img[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi, (match, src) => {
+			// Skip absolute URLs and data URLs
+			if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('app://')) {
+				return match;
+			}
+			
+			try {
+				// Resolve relative URL using epub.js book.resolve
+				const resolvedUrl = this.book.resolve(src);
+				console.debug('Resolved image URL:', src, '->', resolvedUrl);
+				return match.replace(src, resolvedUrl);
+			} catch (error) {
+				console.warn('Failed to resolve image URL:', src, error);
+				return match;
+			}
+		});
+		
+		// Process other resource URLs (audio, video, etc.) if needed
+		processedContent = processedContent.replace(/<(audio|video)[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi, (match, tag, src) => {
+			if (src.startsWith('http') || src.startsWith('data:') || src.startsWith('app://')) {
+				return match;
+			}
+			
+			try {
+				const resolvedUrl = this.book.resolve(src);
+				console.debug('Resolved', tag, 'URL:', src, '->', resolvedUrl);
+				return match.replace(src, resolvedUrl);
+			} catch (error) {
+				console.warn('Failed to resolve', tag, 'URL:', src, error);
+				return match;
+			}
+		});
+		
+		return processedContent;
+	}
+
+	private async renderPage(index: number, pageNumber: number = 0) {
+		console.log('renderPage called with index:', index, 'page:', pageNumber);
 		if (!this.spineItems) {
 			console.error('spineItems is undefined');
 			return;
@@ -381,25 +450,33 @@ export class EpubReaderView extends ItemView {
 			return;
 		}
 		
+		// If switching chapters, reset pagination
+		if (this.currentIndex !== index) {
+			this.currentPage = 0;
+			this.currentChapterContent = '';
+		}
+		
 		this.currentIndex = index;
+		this.currentPage = pageNumber;
 		const item = this.spineItems[index];
 		console.log('Loading spine item:', item);
 		
 		try {
-			await item.load(this.book.load.bind(this.book));
-			const text = await item.render();
-			const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-			const body = bodyMatch ? bodyMatch[1] : text;
-			
-			// Update the content area with stylesheets and content
-			const contentDiv = this.containerEl.querySelector('#epub-content');
-			if (contentDiv) {
-				// Apply cached stylesheets and body content
-				contentDiv.innerHTML = this.epubStylesheets + body;
+			// Load chapter content if not cached
+			if (!this.currentChapterContent) {
+				await item.load(this.book.load.bind(this.book));
+				const text = await item.render();
+				const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+				const rawContent = bodyMatch ? bodyMatch[1] : text;
+				// Process HTML content to resolve image URLs and other resources
+				this.currentChapterContent = this.processHtmlContent(rawContent);
 			}
 			
+			// Setup pagination and render current page
+			await this.setupPaginationAndRender();
+			
 			this.currentCfi = item.cfiBase;
-			console.log('Rendered html for index', index, 'CFI:', this.currentCfi);
+			console.log('Rendered html for index', index, 'page', pageNumber, 'CFI:', this.currentCfi);
 			
 			// Update navigation state
 			this.updateNavigationState();
@@ -420,12 +497,90 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
+	/**
+	 * Setup column-based pagination and render the current page
+	 */
+	private async setupPaginationAndRender(): Promise<void> {
+		const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
+		if (!contentDiv) return;
+		
+		// Get viewport dimensions - use offsetWidth/Height to get actual content size
+		// Get parent container size to avoid accumulating padding calculations
+		const container = this.containerEl.children[1] as HTMLElement;
+		this.viewportWidth = container.clientWidth - 32; // Only account for content div padding once
+		const viewportHeight = container.clientHeight - 82; // Account for nav (50px) + content padding (32px)
+		
+		// Create temporary container to measure content
+		const tempContainer = document.createElement('div');
+		tempContainer.style.position = 'absolute';
+		tempContainer.style.top = '-9999px';
+		tempContainer.style.left = '-9999px';
+		tempContainer.style.width = `${this.viewportWidth}px`;
+		tempContainer.style.height = `${viewportHeight}px`;
+		tempContainer.style.overflow = 'hidden';
+		tempContainer.style.columnWidth = `${this.viewportWidth}px`;
+		tempContainer.style.columnGap = '0px';
+		tempContainer.className = 'epub-reader-content';
+		
+		// Add stylesheets and content to temp container
+		tempContainer.innerHTML = this.epubStylesheets + this.currentChapterContent;
+		
+		document.body.appendChild(tempContainer);
+		
+		// Calculate total pages needed
+		await new Promise(resolve => setTimeout(resolve, 100)); // Wait for layout
+		const scrollWidth = tempContainer.scrollWidth;
+		this.totalPages = Math.max(1, Math.ceil(scrollWidth / this.viewportWidth));
+		
+		console.log('Pagination calculated:', {
+			viewportWidth: this.viewportWidth,
+			scrollWidth,
+			totalPages: this.totalPages,
+			currentPage: this.currentPage
+		});
+		
+		// Setup main content container with pagination
+		contentDiv.style.width = `${this.viewportWidth}px`;
+		contentDiv.style.height = `${viewportHeight}px`;
+		contentDiv.style.overflow = 'hidden';
+		contentDiv.style.position = 'relative';
+		contentDiv.style.boxSizing = 'border-box';
+		
+		// Create inner wrapper for column layout
+		const innerWrapper = document.createElement('div');
+		innerWrapper.style.width = `${this.totalPages * this.viewportWidth}px`;
+		innerWrapper.style.height = `${viewportHeight}px`;
+		innerWrapper.style.columnWidth = `${this.viewportWidth}px`;
+		innerWrapper.style.columnGap = '0px';
+		innerWrapper.style.columnFill = 'auto';
+		innerWrapper.style.position = 'absolute';
+		innerWrapper.style.top = '0';
+		innerWrapper.style.left = '0';
+		innerWrapper.className = 'epub-pagination-wrapper';
+		
+		// Apply content to inner wrapper
+		innerWrapper.innerHTML = this.epubStylesheets + this.currentChapterContent;
+		
+		// Clear and set content
+		contentDiv.innerHTML = '';
+		contentDiv.appendChild(innerWrapper);
+		
+		// Navigate to current page by adjusting scroll position
+		const offsetX = this.currentPage * this.viewportWidth;
+		contentDiv.scrollLeft = offsetX;
+		
+		// Clean up temp container
+		document.body.removeChild(tempContainer);
+	}
+
 	private async navigateToCfi(cfi: string) {
-		await EpubNavigation.navigateToCfi(cfi, this.spineItems, (index: number) => this.renderPage(index));
+		await EpubNavigation.navigateToCfi(cfi, this.spineItems, (index: number) => this.renderPage(index, 0));
 	}
 
 	private async saveProgress() {
-		await FileOperations.saveProgress(this.app, this.noteFilePath, this.currentCfi, this.pluginInstance);
+		// Save actual page number instead of ratio to avoid floating point errors
+		const progressCfi = `${this.currentCfi}@${this.currentPage}`;
+		await FileOperations.saveProgress(this.app, this.noteFilePath, progressCfi, this.pluginInstance);
 	}
 
 	private async saveHighlight(selection: Selection, config: any): Promise<void> {
@@ -508,15 +663,51 @@ export class EpubReaderView extends ItemView {
 	// File operations moved to FileOperations module
 
 	private handleNext() {
-		EpubNavigation.handleNext(this.currentIndex, this.spineItems, (index: number) => this.renderPage(index));
+		// Check if we can go to next page within current chapter
+		if (this.currentPage < this.totalPages - 1) {
+			this.renderPage(this.currentIndex, this.currentPage + 1);
+		} else {
+			// Move to next chapter if available
+			if (this.currentIndex < this.spineItems.length - 1) {
+				this.currentChapterContent = ''; // Reset chapter content
+				this.renderPage(this.currentIndex + 1, 0);
+			}
+		}
 	}
 
 	private handlePrevious() {
-		EpubNavigation.handlePrevious(this.currentIndex, this.spineItems, (index: number) => this.renderPage(index));
+		// Check if we can go to previous page within current chapter
+		if (this.currentPage > 0) {
+			this.renderPage(this.currentIndex, this.currentPage - 1);
+		} else {
+			// Move to previous chapter if available
+			if (this.currentIndex > 0) {
+				this.currentChapterContent = ''; // Reset chapter content
+				// We'll need to calculate total pages of previous chapter first
+				this.loadPreviousChapterLastPage();
+			}
+		}
 	}
 
 	private updateNavigationState() {
-		EpubNavigation.updateNavigationState(this.currentIndex, this.spineItems, this.containerEl);
+		const prevBtn = this.containerEl.querySelector('#prev-btn') as HTMLButtonElement;
+		const nextBtn = this.containerEl.querySelector('#next-btn') as HTMLButtonElement;
+		const positionSpan = this.containerEl.querySelector('#position-indicator') as HTMLElement;
+
+		// Previous button: disabled if at first page of first chapter
+		const atFirstPage = this.currentIndex === 0 && this.currentPage === 0;
+		if (prevBtn) prevBtn.disabled = atFirstPage;
+
+		// Next button: disabled if at last page of last chapter
+		const atLastPage = this.currentIndex === this.spineItems.length - 1 && this.currentPage === this.totalPages - 1;
+		if (nextBtn) nextBtn.disabled = atLastPage;
+
+		// Update position indicator to show page info
+		if (positionSpan) {
+			const chapterInfo = `Ch ${this.currentIndex + 1}/${this.spineItems.length}`;
+			const pageInfo = `Page ${this.currentPage + 1}/${this.totalPages}`;
+			positionSpan.textContent = `${chapterInfo} - ${pageInfo}`;
+		}
 	}
 
 	private renderView() {
@@ -610,13 +801,119 @@ export class EpubReaderView extends ItemView {
 	async onClose() {
 		// Clean up any resources
 		this.hideHighlightOverlay();
+		
+		// Clear resize timeout
+		if (this.resizeTimeout) {
+			clearTimeout(this.resizeTimeout);
+			this.resizeTimeout = null;
+		}
 	}
 
 	private async navigateToHighlight(cfi: string) {
-		await EpubNavigation.navigateToHighlight(cfi, this.spineItems, (index: number) => this.renderPage(index));
+		await EpubNavigation.navigateToHighlight(cfi, this.spineItems, (index: number) => this.renderPage(index, 0));
 	}
 
 	private clearDisplayedHighlights() {
 		ReaderDisplay.clearDisplayedHighlights(this.containerEl);
+	}
+
+	/**
+	 * Load previous chapter and navigate to its last page
+	 */
+	private async loadPreviousChapterLastPage(): Promise<void> {
+		try {
+			const prevIndex = this.currentIndex - 1;
+			const item = this.spineItems[prevIndex];
+			
+			// Load previous chapter content
+			await item.load(this.book.load.bind(this.book));
+			const text = await item.render();
+			const bodyMatch = text.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+			const rawContent = bodyMatch ? bodyMatch[1] : text;
+			this.currentChapterContent = this.processHtmlContent(rawContent);
+			
+			// Calculate total pages for this chapter
+			const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
+			if (!contentDiv) return;
+			
+			const container = this.containerEl.children[1] as HTMLElement;
+			const viewportWidth = container.clientWidth - 32;
+			const viewportHeight = container.clientHeight - 82;
+			
+			// Create temporary container to measure content
+			const tempContainer = document.createElement('div');
+			tempContainer.style.position = 'absolute';
+			tempContainer.style.top = '-9999px';
+			tempContainer.style.left = '-9999px';
+			tempContainer.style.width = `${viewportWidth}px`;
+			tempContainer.style.height = `${viewportHeight}px`;
+			tempContainer.style.overflow = 'hidden';
+			tempContainer.style.columnWidth = `${viewportWidth}px`;
+			tempContainer.style.columnGap = '0px';
+			tempContainer.className = 'epub-reader-content';
+			
+			tempContainer.innerHTML = this.epubStylesheets + this.currentChapterContent;
+			document.body.appendChild(tempContainer);
+			
+			await new Promise(resolve => setTimeout(resolve, 100));
+			const scrollWidth = tempContainer.scrollWidth;
+			const totalPages = Math.max(1, Math.ceil(scrollWidth / viewportWidth));
+			
+			document.body.removeChild(tempContainer);
+			item.unload();
+			
+			// Navigate to last page of previous chapter
+			this.renderPage(prevIndex, totalPages - 1);
+			
+		} catch (error) {
+			console.error('Error loading previous chapter last page:', error);
+		}
+	}
+
+	/**
+	 * Navigate to saved progress which may include page position
+	 */
+	private async navigateToSavedProgress(savedProgress: string): Promise<void> {
+		try {
+			let cfi = savedProgress;
+			let savedPageNumber = 0;
+			
+			// Check if saved progress includes page position (format: cfi@pageNumber)
+			if (savedProgress.includes('@')) {
+				const parts = savedProgress.split('@');
+				cfi = parts[0];
+				const pageValue = parseFloat(parts[1]) || 0;
+				
+				// If pageValue is < 1, it's the old ratio format, otherwise it's page number
+				if (pageValue < 1) {
+					// Old ratio format - convert to page number
+					savedPageNumber = Math.round(pageValue * 100); // Rough conversion
+				} else {
+					// New page number format
+					savedPageNumber = Math.floor(pageValue);
+				}
+			}
+			
+			// First navigate to the chapter
+			await EpubNavigation.navigateToCfi(cfi, this.spineItems, async (index: number) => {
+				// Load the chapter and calculate pagination
+				await this.renderPage(index, 0);
+				
+				// If we have a saved page number, navigate to that page
+				if (savedPageNumber > 0 && this.totalPages > 1) {
+					const clampedPage = Math.min(Math.max(0, savedPageNumber), this.totalPages - 1);
+					console.log('Navigating to saved page:', {
+						savedPageNumber,
+						totalPages: this.totalPages,
+						clampedPage
+					});
+					await this.renderPage(index, clampedPage);
+				}
+			});
+			
+		} catch (error) {
+			console.error('Error navigating to saved progress:', error);
+			await this.renderPage(0);
+		}
 	}
 }

@@ -38,6 +38,9 @@ use official documentation:
 - http://epubjs.org/documentation/0.3/
 - https://docs.obsidian.md/Reference/TypeScript+API/Reference
 
+Epubjs is used as library. We render the epub in obsidian and are using the epubjs library to handle all cfi and epub related operations. 
+We don't use the epubjs viewer, we render the epub in a custom way using the epubjs library.
+
 
 Comments and Documentation
 
