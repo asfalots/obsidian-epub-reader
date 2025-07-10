@@ -170,4 +170,65 @@ export class HighlightLogic {
 			.replace(/\{\{date\}\}/g, new Date().toLocaleDateString())
 			.replace(/\{\{time\}\}/g, new Date().toLocaleTimeString());
 	}
+
+	/**
+	 * Applies highlights to HTML content using regex-based approach
+	 */
+	static applyHighlightsToHtml(htmlContent: string, annotations: AnnotationData[]): string {
+		if (!annotations.length) return htmlContent;
+
+		let processedHtml = htmlContent;
+
+		// Sort annotations by text length (longest first) to avoid partial matches
+		const sortedAnnotations = [...annotations].sort((a, b) => b.text.length - a.text.length);
+
+		for (const annotation of sortedAnnotations) {
+			processedHtml = this.highlightTextInHtml(processedHtml, annotation);
+		}
+
+		return processedHtml;
+	}
+
+	/**
+	 * Highlights a specific text in HTML content using regex
+	 */
+	private static highlightTextInHtml(htmlContent: string, annotation: AnnotationData): string {
+		const { text, color, id, type } = annotation;
+		
+		// Escape special regex characters in the search text
+		const escapedText = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		
+		// Create the mark tag with styling and data attributes
+		const markOpenTag = `<mark style="background-color: ${color}; border-radius: 2px; padding: 1px 2px;" data-annotation-id="${id}" data-annotation-type="${type}" title="${type}: ${text.substring(0, 100)}${text.length > 100 ? '...' : ''}">`;
+		const markCloseTag = `</mark>`;
+		
+		// Simple approach: try exact text match first
+		const simpleRegex = new RegExp(`(${escapedText})`, 'gi');
+		let result = htmlContent.replace(simpleRegex, `${markOpenTag}$1${markCloseTag}`);
+		
+		if (result !== htmlContent) {
+			return result;
+		}
+		
+		// If no replacement was made, try a more flexible approach for text spanning HTML tags
+		const words = escapedText.split(/\s+/);
+		
+		if (words.length > 1) {
+			// Create pattern that allows HTML tags and whitespace between words
+			const flexiblePattern = words.map(word => `(${word})`).join('(?:\\s*<[^>]*>\\s*|\\s+)');
+			const flexibleRegex = new RegExp(flexiblePattern, 'gi');
+			
+			result = htmlContent.replace(flexibleRegex, (match, ...groups) => {
+				// Wrap each word group with mark tags
+				let highlighted = match;
+				for (let i = 0; i < words.length; i++) {
+					const wordRegex = new RegExp(`\\b${words[i]}\\b`, 'gi');
+					highlighted = highlighted.replace(wordRegex, `${markOpenTag}${words[i]}${markCloseTag}`);
+				}
+				return highlighted;
+			});
+		}
+		
+		return result;
+	}
 }
