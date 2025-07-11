@@ -55,6 +55,30 @@ export default class EpubReaderPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		// Refresh all open EPUB reader views to apply new settings
+		this.refreshEpubReaderViews();
+	}
+
+	/**
+	 * Refresh all open EPUB reader views to apply updated settings
+	 */
+	private refreshEpubReaderViews() {
+		console.debug('Refreshing EPUB reader views with new settings');
+		const { workspace } = this.app;
+		const leaves = workspace.getLeavesOfType(EPUB_READER_VIEW_TYPE);
+		
+		console.debug(`Found ${leaves.length} EPUB reader views to refresh`);
+		
+		leaves.forEach((leaf, index) => {
+			const view = leaf.view as EpubReaderView;
+			if (view && typeof view.updateSettingsAndRefresh === 'function') {
+				console.debug(`Refreshing view ${index + 1}`);
+				// Update the view with current settings and re-render
+				view.updateSettingsAndRefresh(this.settings);
+			} else {
+				console.debug(`View ${index + 1} is null or doesn't have updateSettingsAndRefresh method`);
+			}
+		});
 	}
 
 	async activateEpubReaderView(epubProperty: string, noteFile: TFile) {

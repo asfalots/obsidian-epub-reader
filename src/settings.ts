@@ -13,12 +13,14 @@ export interface EpubReaderSettings {
 	progressPropertyName: string;
 	highlightConfigs: HighlightConfig[];
 	navigationMode: 'page' | 'chapter';
+	hideNavigationHeader: boolean;
 }
 
 export const DEFAULT_SETTINGS: EpubReaderSettings = {
 	epubPropertyName: 'epub',
 	progressPropertyName: 'epub-cfi',
 	navigationMode: 'page',
+	hideNavigationHeader: false,
 	highlightConfigs: [
 		{
 			name: 'Quotes',
@@ -85,6 +87,16 @@ export class EpubReaderSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.navigationMode)
 				.onChange(async (value: 'page' | 'chapter') => {
 					this.plugin.settings.navigationMode = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Hide Navigation Header')
+			.setDesc('Hide the navigation buttons and reading location indicator')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.hideNavigationHeader)
+				.onChange(async (value) => {
+					this.plugin.settings.hideNavigationHeader = value;
 					await this.plugin.saveSettings();
 				}));
 

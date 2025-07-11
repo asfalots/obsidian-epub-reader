@@ -551,7 +551,11 @@ export class EpubReaderView extends ItemView {
 		// Get parent container size to avoid accumulating padding calculations
 		const container = this.containerEl.children[1] as HTMLElement;
 		this.viewportWidth = container.clientWidth - 32; // Only account for content div padding once
-		const viewportHeight = container.clientHeight - 82; // Account for nav (50px) + content padding (32px)
+		
+		// Calculate height based on whether navigation header is shown
+		const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
+		const navHeight = hideNavigation ? 0 : 50; // Navigation header height
+		const viewportHeight = container.clientHeight - navHeight - 32; // Account for nav + content padding
 		
 		// Create temporary container to measure content
 		const tempContainer = document.createElement('div');
@@ -626,7 +630,11 @@ export class EpubReaderView extends ItemView {
 		// Get viewport dimensions
 		const container = this.containerEl.children[1] as HTMLElement;
 		const viewportWidth = container.clientWidth - 32;
-		const viewportHeight = container.clientHeight - 82;
+		
+		// Calculate height based on whether navigation header is shown
+		const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
+		const navHeight = hideNavigation ? 0 : 50; // Navigation header height
+		const viewportHeight = container.clientHeight - navHeight - 32; // Account for nav + content padding
 		
 		// Setup content container for scrolling
 		contentDiv.style.width = `${viewportWidth}px`;
@@ -814,6 +822,10 @@ export class EpubReaderView extends ItemView {
 	}
 
 	private updateNavigationState() {
+		// Early return if navigation header is hidden
+		const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
+		if (hideNavigation) return;
+		
 		const prevBtn = this.containerEl.querySelector('#prev-btn') as HTMLButtonElement;
 		const nextBtn = this.containerEl.querySelector('#next-btn') as HTMLButtonElement;
 		const positionSpan = this.containerEl.querySelector('#position-indicator') as HTMLElement;
@@ -855,32 +867,38 @@ export class EpubReaderView extends ItemView {
 		container.empty();
 		
 		if (this.epubPath) {
-			// Add navigation controls
-			const navDiv = container.createEl('div');
-			navDiv.style.display = 'flex';
-			navDiv.style.justifyContent = 'space-between';
-			navDiv.style.alignItems = 'center';
-			navDiv.style.padding = '0.5em';
-			navDiv.style.borderBottom = '1px solid #ccc';
+			const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
 			
-			const prevBtn = navDiv.createEl('button', { text: 'Previous' });
-			prevBtn.id = 'prev-btn';
-			prevBtn.onclick = () => this.handlePrevious();
-			
-			const positionSpan = navDiv.createEl('span');
-			positionSpan.id = 'position-indicator';
-			positionSpan.setText('');
-			
-			const nextBtn = navDiv.createEl('button', { text: 'Next' });
-			nextBtn.id = 'next-btn';
-			nextBtn.onclick = () => this.handleNext();
+			// Add navigation controls conditionally
+			let navDiv: HTMLElement | null = null;
+			if (!hideNavigation) {
+				navDiv = container.createEl('div');
+				navDiv.style.display = 'flex';
+				navDiv.style.justifyContent = 'space-between';
+				navDiv.style.alignItems = 'center';
+				navDiv.style.padding = '0.5em';
+				navDiv.style.borderBottom = '1px solid #ccc';
+				
+				const prevBtn = navDiv.createEl('button', { text: 'Previous' });
+				prevBtn.id = 'prev-btn';
+				prevBtn.onclick = () => this.handlePrevious();
+				
+				const positionSpan = navDiv.createEl('span');
+				positionSpan.id = 'position-indicator';
+				positionSpan.setText('');
+				
+				const nextBtn = navDiv.createEl('button', { text: 'Next' });
+				nextBtn.id = 'next-btn';
+				nextBtn.onclick = () => this.handleNext();
+			}
 			
 			// Add content area for EPUB content only
 			const contentDiv = container.createEl('div');
 			contentDiv.id = 'epub-content';
 			contentDiv.className = 'epub-reader-content'; // Add class for CSS scoping
 			contentDiv.style.width = '100%';
-			contentDiv.style.height = 'calc(100% - 50px)'; // Account for navigation height
+			// Adjust height based on whether navigation is shown
+			contentDiv.style.height = hideNavigation ? '100%' : 'calc(100% - 50px)';
 			contentDiv.style.padding = '1em';
 			contentDiv.style.overflow = 'auto';
 			contentDiv.style.userSelect = 'text'; // Explicitly enable text selection
@@ -987,7 +1005,11 @@ export class EpubReaderView extends ItemView {
 			
 			const container = this.containerEl.children[1] as HTMLElement;
 			const viewportWidth = container.clientWidth - 32;
-			const viewportHeight = container.clientHeight - 82;
+			
+			// Calculate height based on whether navigation header is shown
+			const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
+			const navHeight = hideNavigation ? 0 : 50; // Navigation header height
+			const viewportHeight = container.clientHeight - navHeight - 32; // Account for nav + content padding
 			
 			// Create temporary container to measure content
 			const tempContainer = document.createElement('div');
@@ -1099,6 +1121,49 @@ export class EpubReaderView extends ItemView {
 		// If we have content loaded, re-render with the new mode
 		if (this.currentChapterContent && this.spineItems) {
 			await this.renderPage(this.currentIndex, 0);
+		}
+	}
+
+	/**
+	 * Update settings and refresh the view
+	 */
+	updateSettingsAndRefresh(newSettings: any): void {
+		console.debug('updateSettingsAndRefresh called with settings:', newSettings);
+		if (!this.pluginInstance) {
+			console.debug('No plugin instance, returning');
+			return;
+		}
+		
+		// Check if navigation header visibility changed
+		const oldHideNavigation = this.pluginInstance.settings?.hideNavigationHeader || false;
+		const newHideNavigation = newSettings?.hideNavigationHeader || false;
+		
+		// Check if navigation mode changed
+		const oldNavigationMode = this.navigationMode;
+		const newNavigationMode = newSettings?.navigationMode || 'page';
+		
+		console.debug('Settings comparison:', {
+			oldHideNavigation,
+			newHideNavigation,
+			oldNavigationMode,
+			newNavigationMode
+		});
+		
+		// Update plugin instance settings
+		this.pluginInstance.settings = newSettings;
+		this.navigationMode = newNavigationMode;
+		
+		// Always re-render when settings change to ensure UI is up-to-date
+		console.debug('Re-rendering view due to settings change');
+		this.renderView();
+		
+		// If we have content loaded, re-render the current page
+		if (this.currentChapterContent && this.spineItems) {
+			console.debug('Re-rendering current page');
+			// Use setTimeout to ensure DOM update happens after renderView
+			setTimeout(() => {
+				this.renderPage(this.currentIndex, this.currentPage);
+			}, 100);
 		}
 	}
 }
