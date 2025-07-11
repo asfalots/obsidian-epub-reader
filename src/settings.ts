@@ -14,6 +14,7 @@ export interface EpubReaderSettings {
 	highlightConfigs: HighlightConfig[];
 	navigationMode: 'page' | 'chapter';
 	hideNavigationHeader: boolean;
+	navigationHeaderPosition: 'top' | 'bottom';
 }
 
 export const DEFAULT_SETTINGS: EpubReaderSettings = {
@@ -21,6 +22,7 @@ export const DEFAULT_SETTINGS: EpubReaderSettings = {
 	progressPropertyName: 'epub-cfi',
 	navigationMode: 'page',
 	hideNavigationHeader: false,
+	navigationHeaderPosition: 'top',
 	highlightConfigs: [
 		{
 			name: 'Quotes',
@@ -97,6 +99,18 @@ export class EpubReaderSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.hideNavigationHeader)
 				.onChange(async (value) => {
 					this.plugin.settings.hideNavigationHeader = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Navigation Header Position')
+			.setDesc('Position of the navigation header (when not hidden)')
+			.addDropdown(dropdown => dropdown
+				.addOption('top', 'Top')
+				.addOption('bottom', 'Bottom')
+				.setValue(this.plugin.settings.navigationHeaderPosition)
+				.onChange(async (value: 'top' | 'bottom') => {
+					this.plugin.settings.navigationHeaderPosition = value;
 					await this.plugin.saveSettings();
 				}));
 

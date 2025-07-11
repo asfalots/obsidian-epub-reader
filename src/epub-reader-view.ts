@@ -910,16 +910,23 @@ export class EpubReaderView extends ItemView {
 		
 		if (this.epubPath) {
 			const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
+			const navigationPosition = this.pluginInstance?.settings?.navigationHeaderPosition || 'top';
 			
-			// Add navigation controls conditionally
+			// Create navigation controls
 			let navDiv: HTMLElement | null = null;
 			if (!hideNavigation) {
-				navDiv = container.createEl('div');
+				navDiv = document.createElement('div');
 				navDiv.style.display = 'flex';
 				navDiv.style.justifyContent = 'space-between';
 				navDiv.style.alignItems = 'center';
 				navDiv.style.padding = '0.5em';
-				navDiv.style.borderBottom = '1px solid #ccc';
+				
+				// Apply border based on position
+				if (navigationPosition === 'top') {
+					navDiv.style.borderBottom = '1px solid #ccc';
+				} else {
+					navDiv.style.borderTop = '1px solid #ccc';
+				}
 				
 				const prevBtn = navDiv.createEl('button', { text: 'Previous' });
 				prevBtn.id = 'prev-btn';
@@ -934,7 +941,7 @@ export class EpubReaderView extends ItemView {
 				nextBtn.onclick = () => this.handleNext();
 			}
 			
-			// Add content area for EPUB content only
+			// Add content area for EPUB content
 			const contentDiv = container.createEl('div');
 			contentDiv.id = 'epub-content';
 			contentDiv.className = 'epub-reader-content'; // Add class for CSS scoping
@@ -945,6 +952,17 @@ export class EpubReaderView extends ItemView {
 			contentDiv.style.overflow = 'auto';
 			contentDiv.style.userSelect = 'text'; // Explicitly enable text selection
 			contentDiv.style.webkitUserSelect = 'text'; // For webkit browsers
+			
+			// Add navigation div to container based on position
+			if (!hideNavigation && navDiv) {
+				if (navigationPosition === 'top') {
+					// Insert navigation before content
+					container.insertBefore(navDiv, contentDiv);
+				} else {
+					// Append navigation after content
+					container.appendChild(navDiv);
+				}
+			}
 			
 			// Setup swipe gestures for mobile after content div is created
 			if (UIOverlay.isMobile()) {
