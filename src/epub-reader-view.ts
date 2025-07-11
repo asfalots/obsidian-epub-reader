@@ -42,6 +42,12 @@ export class EpubReaderView extends ItemView {
 	private viewportWidth: number = 0;
 	private resizeTimeout: NodeJS.Timeout | null = null;
 	private navigationMode: 'page' | 'chapter' = 'page';
+	
+	// Touch/swipe detection properties
+	private touchStartX: number = 0;
+	private touchStartY: number = 0;
+	private touchStartTime: number = 0;
+	private isSwipeInProgress: boolean = false;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -82,6 +88,9 @@ export class EpubReaderView extends ItemView {
 			// Mobile-specific touch handling
 			this.containerEl.addEventListener('touchend', this.handleTextSelection.bind(this));
 			document.addEventListener('selectionchange', this.handleTextSelection.bind(this));
+			
+			// Add swipe gesture detection for navigation
+			this.setupSwipeGestures();
 		} else {
 			// Desktop handling
 			this.containerEl.addEventListener('mouseup', this.handleTextSelection.bind(this));
@@ -937,6 +946,17 @@ export class EpubReaderView extends ItemView {
 			contentDiv.style.userSelect = 'text'; // Explicitly enable text selection
 			contentDiv.style.webkitUserSelect = 'text'; // For webkit browsers
 			
+			// Setup swipe gestures for mobile after content div is created
+			if (UIOverlay.isMobile()) {
+				console.debug('Setting up swipe gestures for mobile');
+				// Use setTimeout to ensure DOM is ready
+				setTimeout(() => {
+					this.setupSwipeGestures();
+				}, 100);
+			} else {
+				console.debug('Not mobile, skipping swipe gestures');
+			}
+			
 		} else {
 			container.createEl('div', { text: 'EPUB Reader - No EPUB file specified' });
 		}
@@ -1182,5 +1202,151 @@ export class EpubReaderView extends ItemView {
 				this.renderPage(this.currentIndex, this.currentPage);
 			}, 100);
 		}
+	}
+
+	/**
+	 * Setup swipe gesture detection for mobile navigation
+	 */
+	private setupSwipeGestures(): void {
+		const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
+		if (!contentDiv) {
+			console.debug('No content div found for swipe gestures');
+			return;
+		}
+		
+		console.debug('Setting up swipe gestures on content div');
+		
+		// Disable Obsidian's global touch gestures more aggressively
+		this.containerEl.style.touchAction = 'pan-y'; // Allow vertical scrolling but prevent horizontal gestures
+		this.containerEl.style.userSelect = 'none'; // Prevent text selection issues
+		
+		// Add a high-priority capture event to block Obsidian's gestures
+		this.containerEl.addEventListener('touchstart', (e: TouchEvent) => {
+			// Only prevent if this looks like a horizontal gesture
+			if (e.touches.length === 1) {
+				const touch = e.touches[0];
+				// Store for later comparison
+				(this.containerEl as any)._startX = touch.clientX;
+				(this.containerEl as any)._startY = touch.clientY;
+			}
+		}, { capture: true, passive: false });
+		
+		this.containerEl.addEventListener('touchmove', (e: TouchEvent) => {
+			if (e.touches.length === 1 && (this.containerEl as any)._startX !== undefined) {
+				const touch = e.touches[0];
+				const deltaX = Math.abs(touch.clientX - (this.containerEl as any)._startX);
+				const deltaY = Math.abs(touch.clientY - (this.containerEl as any)._startY);
+				
+				// If it's more horizontal than vertical and significant, block Obsidian
+				if (deltaX > deltaY && deltaX > 20) {
+					e.preventDefault();
+					e.stopPropagation();
+					console.debug('Blocking Obsidian gesture, deltaX:', deltaX);
+				}
+			}
+		}, { capture: true, passive: false });
+		
+		// Add event listeners to both container and content to catch all touches
+		const elements = [this.containerEl, contentDiv];
+		
+		elements.forEach(element => {
+			element.addEventListener('touchstart', (e) => {
+				this.handleTouchStart(e as TouchEvent);
+			}, { passive: false });
+			
+			element.addEventListener('touchmove', (e) => {
+				this.handleTouchMove(e as TouchEvent);
+			}, { passive: false });
+			
+			element.addEventListener('touchend', (e) => {
+				this.handleTouchEnd(e as TouchEvent);
+			}, { passive: false });
+		});
+		
+		console.debug('Swipe gesture event listeners added');
+	}
+
+	/**
+	 * Handle touch start for swipe detection
+	 */
+	private handleTouchStart(e: TouchEvent): void {
+		if (e.touches.length !== 1) return;
+		
+		// Don't start swipe detection if touching overlay buttons or interactive elements
+		const target = e.target as HTMLElement;
+		if (target.closest('button') || target.closest('[role="button"]') || target.closest('.highlight-overlay')) {
+			return;
+		}
+		
+		const touch = e.touches[0];
+		this.touchStartX = touch.clientX;
+		this.touchStartY = touch.clientY;
+		this.touchStartTime = Date.now();
+		this.isSwipeInProgress = false;
+		
+		console.debug('Touch start at:', this.touchStartX, this.touchStartY);
+	}
+
+	/**
+	 * Handle touch move to distinguish between swipe and scroll
+	 */
+	private handleTouchMove(e: TouchEvent): void {
+		if (e.touches.length !== 1) return;
+		
+		const touch = e.touches[0];
+		const deltaX = Math.abs(touch.clientX - this.touchStartX);
+		const deltaY = Math.abs(touch.clientY - this.touchStartY);
+		
+		// If the movement is more horizontal than vertical, it might be a swipe
+		if (deltaX > deltaY && deltaX > 30) {
+			this.isSwipeInProgress = true;
+			console.debug('Swipe in progress detected, deltaX:', deltaX, 'deltaY:', deltaY);
+			
+			// Prevent Obsidian's menu from appearing during horizontal swipes
+			e.preventDefault();
+			e.stopPropagation();
+		}
+	}
+
+	/**
+	 * Handle touch end to detect swipe gestures
+	 */
+	private handleTouchEnd(e: TouchEvent): void {
+		const touch = e.changedTouches[0];
+		const deltaX = touch.clientX - this.touchStartX;
+		const deltaY = touch.clientY - this.touchStartY;
+		const deltaTime = Date.now() - this.touchStartTime;
+		
+		// Swipe detection parameters
+		const minSwipeDistance = 50;
+		const maxSwipeTime = 500;
+		const maxVerticalDistance = 100;
+		
+		// Check if it's a valid swipe
+		const isHorizontalSwipe = Math.abs(deltaX) > minSwipeDistance;
+		const isWithinTimeLimit = deltaTime < maxSwipeTime;
+		const isNotTooVertical = Math.abs(deltaY) < maxVerticalDistance;
+		
+		// Check if there's text selection (don't navigate if user is selecting text)
+		const selection = window.getSelection();
+		const hasTextSelection = selection && selection.toString().length > 0;
+		
+		if (isHorizontalSwipe && isWithinTimeLimit && isNotTooVertical && !hasTextSelection) {
+			// Prevent any default behavior
+			e.preventDefault();
+			e.stopPropagation();
+			
+			console.debug('Swipe detected:', deltaX > 0 ? 'right' : 'left', 'deltaX:', deltaX);
+			
+			if (deltaX > 0) {
+				// Swipe right - go to previous page/chapter
+				this.handlePrevious();
+			} else {
+				// Swipe left - go to next page/chapter
+				this.handleNext();
+			}
+		}
+		
+		this.isSwipeInProgress = false;
 	}
 }
