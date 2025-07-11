@@ -116,6 +116,13 @@ export class EpubReaderView extends ItemView {
 				this.hideHighlightOverlay();
 			}
 		});
+		
+		// Update status bar visibility when view opens
+		setTimeout(() => {
+			if (this.pluginInstance) {
+				this.pluginInstance.updateStatusBarVisibility();
+			}
+		}, 100);
 	}
 
 	getState() {
@@ -821,7 +828,30 @@ export class EpubReaderView extends ItemView {
 		}
 	}
 
+	/**
+	 * Update the plugin's status bar with current position
+	 */
+	private updatePluginStatusBar() {
+		if (!this.pluginInstance) {
+			return;
+		}
+		
+		let positionText = '';
+		if (this.navigationMode === 'page') {
+			const chapterInfo = `Ch ${this.currentIndex + 1}/${this.spineItems?.length || 0}`;
+			const pageInfo = `Page ${this.currentPage + 1}/${this.totalPages}`;
+			positionText = `${chapterInfo} - ${pageInfo}`;
+		} else {
+			positionText = `Chapter ${this.currentIndex + 1}/${this.spineItems?.length || 0}`;
+		}
+		
+		this.pluginInstance.updateStatusBarPosition(positionText);
+	}
+
 	private updateNavigationState() {
+		// Always update status bar with current position
+		this.updatePluginStatusBar();
+		
 		// Early return if navigation header is hidden
 		const hideNavigation = this.pluginInstance?.settings?.hideNavigationHeader || false;
 		if (hideNavigation) return;
@@ -860,6 +890,9 @@ export class EpubReaderView extends ItemView {
 				positionSpan.textContent = `Chapter ${this.currentIndex + 1}/${this.spineItems.length}`;
 			}
 		}
+		
+		// Update the plugin's status bar with the current position
+		this.updatePluginStatusBar();
 	}
 
 	private renderView() {
@@ -973,6 +1006,11 @@ export class EpubReaderView extends ItemView {
 		if (this.resizeTimeout) {
 			clearTimeout(this.resizeTimeout);
 			this.resizeTimeout = null;
+		}
+		
+		// Update status bar visibility when view closes
+		if (this.pluginInstance) {
+			this.pluginInstance.updateStatusBarVisibility();
 		}
 	}
 
@@ -1128,38 +1166,17 @@ export class EpubReaderView extends ItemView {
 	 * Update settings and refresh the view
 	 */
 	updateSettingsAndRefresh(newSettings: any): void {
-		console.debug('updateSettingsAndRefresh called with settings:', newSettings);
-		if (!this.pluginInstance) {
-			console.debug('No plugin instance, returning');
-			return;
-		}
-		
-		// Check if navigation header visibility changed
-		const oldHideNavigation = this.pluginInstance.settings?.hideNavigationHeader || false;
-		const newHideNavigation = newSettings?.hideNavigationHeader || false;
-		
-		// Check if navigation mode changed
-		const oldNavigationMode = this.navigationMode;
-		const newNavigationMode = newSettings?.navigationMode || 'page';
-		
-		console.debug('Settings comparison:', {
-			oldHideNavigation,
-			newHideNavigation,
-			oldNavigationMode,
-			newNavigationMode
-		});
+		if (!this.pluginInstance) return;
 		
 		// Update plugin instance settings
 		this.pluginInstance.settings = newSettings;
-		this.navigationMode = newNavigationMode;
+		this.navigationMode = newSettings?.navigationMode || 'page';
 		
 		// Always re-render when settings change to ensure UI is up-to-date
-		console.debug('Re-rendering view due to settings change');
 		this.renderView();
 		
 		// If we have content loaded, re-render the current page
 		if (this.currentChapterContent && this.spineItems) {
-			console.debug('Re-rendering current page');
 			// Use setTimeout to ensure DOM update happens after renderView
 			setTimeout(() => {
 				this.renderPage(this.currentIndex, this.currentPage);

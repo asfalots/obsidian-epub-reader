@@ -6,10 +6,15 @@ import { EpubReaderView, EPUB_READER_VIEW_TYPE } from './src/epub-reader-view';
 
 export default class EpubReaderPlugin extends Plugin {
 	settings: EpubReaderSettings;
+	statusBarItem: HTMLElement | null = null;
 
 	async onload() {
 		console.log('EPUB Reader Plugin loading...');
 		await this.loadSettings();
+
+		// Create status bar item for reading position
+		this.statusBarItem = this.addStatusBarItem();
+		this.statusBarItem.style.display = 'none'; // Initially hidden
 
 		// Register the EPUB reader view
 		this.registerView(
@@ -42,6 +47,13 @@ export default class EpubReaderPlugin extends Plugin {
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new EpubReaderSettingTab(this.app, this));
 		
+		// Listen for active leaf changes to update status bar visibility
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () => {
+				this.updateStatusBarVisibility();
+			})
+		);
+		
 		console.log('EPUB Reader Plugin loaded successfully');
 	}
 
@@ -63,20 +75,14 @@ export default class EpubReaderPlugin extends Plugin {
 	 * Refresh all open EPUB reader views to apply updated settings
 	 */
 	private refreshEpubReaderViews() {
-		console.debug('Refreshing EPUB reader views with new settings');
 		const { workspace } = this.app;
 		const leaves = workspace.getLeavesOfType(EPUB_READER_VIEW_TYPE);
 		
-		console.debug(`Found ${leaves.length} EPUB reader views to refresh`);
-		
-		leaves.forEach((leaf, index) => {
+		leaves.forEach((leaf) => {
 			const view = leaf.view as EpubReaderView;
 			if (view && typeof view.updateSettingsAndRefresh === 'function') {
-				console.debug(`Refreshing view ${index + 1}`);
 				// Update the view with current settings and re-render
 				view.updateSettingsAndRefresh(this.settings);
-			} else {
-				console.debug(`View ${index + 1} is null or doesn't have updateSettingsAndRefresh method`);
 			}
 		});
 	}
@@ -131,5 +137,31 @@ export default class EpubReaderPlugin extends Plugin {
 		
 		// Return as-is if it's not a wiki link (assume it's a direct path)
 		return epubProperty;
+	}
+
+	/**
+	 * Update the status bar with reading position
+	 */
+	updateStatusBarPosition(text: string) {
+		if (this.statusBarItem) {
+			this.statusBarItem.textContent = text;
+		}
+	}
+
+	/**
+	 * Show or hide the status bar item based on active view
+	 */
+	updateStatusBarVisibility() {
+		if (!this.statusBarItem) return;
+		
+		const { workspace } = this.app;
+		const activeLeaf = workspace.activeLeaf;
+		const isEpubReaderActive = activeLeaf?.view?.getViewType() === EPUB_READER_VIEW_TYPE;
+		
+		this.statusBarItem.style.display = isEpubReaderActive ? 'block' : 'none';
+		
+		if (!isEpubReaderActive) {
+			this.statusBarItem.textContent = '';
+		}
 	}
 }
