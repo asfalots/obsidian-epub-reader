@@ -21,16 +21,16 @@ export const DEFAULT_SETTINGS: EpubReaderSettings = {
 	navigationMode: 'page',
 	highlightConfigs: [
 		{
-			name: 'Important',
+			name: 'Quotes',
 			color: '#ffeb3b',
-			section: '## Highlights',
-			template: '> {{text}} ^{{cfi}}'
+			section: '## Quotes',
+			template: '> [!quote] {{text}} ^{{cfi}}'
 		},
 		{
-			name: 'Question',
+			name: 'Plot',
 			color: '#ff9800',
-			section: '## Questions',
-			template: '**Q**: {{text}}\n**A**: \n\n^{{cfi}}'
+			section: '## Plots',
+			template: '> [!hint] {{text}} ^{{cfi}}'
 		},
 		{
 			name: 'Note',

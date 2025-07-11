@@ -79,17 +79,22 @@ export class UIOverlay {
 		overlay.style.left = `${overlayLeft}px`;
 		overlay.style.top = `${overlayTop}px`;
 
-		// Create color buttons
+		// Create highlight buttons with names
 		pluginInstance.settings.highlightConfigs.forEach((config: any) => {
 			const button = document.createElement('button');
 			button.className = 'epub-highlight-btn';
+			button.textContent = config.name;
 			button.style.cssText = `
-				width: 24px;
-				height: 24px;
+				padding: 3px 12px;
 				border: 2px solid var(--background-modifier-border);
 				border-radius: 4px;
 				cursor: pointer;
 				background-color: ${config.color};
+				color: white;
+				font-size: 12px;
+				font-weight: 500;
+				white-space: nowrap;
+				text-shadow: 0 1px 2px rgba(0,0,0,0.5);
 				position: relative;
 			`;
 			button.title = config.name;
@@ -146,15 +151,17 @@ export class UIOverlay {
 	 * Shows success state on highlight button
 	 */
 	static showSuccessState(button: HTMLButtonElement): void {
+		const originalText = button.textContent;
 		button.style.opacity = '1';
 		button.style.cursor = 'pointer';
-		button.innerHTML = '✓';
-		button.style.color = 'white';
+		button.textContent = '✓';
 		button.style.fontSize = '14px';
 		button.style.fontWeight = 'bold';
 		
 		setTimeout(() => {
-			button.innerHTML = '';
+			button.textContent = originalText;
+			button.style.fontSize = '12px';
+			button.style.fontWeight = '500';
 		}, SUCCESS_FEEDBACK_DURATION);
 	}
 
@@ -162,16 +169,17 @@ export class UIOverlay {
 	 * Shows error state on highlight button
 	 */
 	static showErrorState(button: HTMLButtonElement, config: any): void {
+		const originalText = button.textContent;
 		button.style.opacity = '1';
 		button.style.cursor = 'pointer';
-		button.innerHTML = '✗';
-		button.style.color = 'white';
+		button.textContent = '✗';
 		button.style.fontSize = '14px';
 		button.style.fontWeight = 'bold';
 		
 		setTimeout(() => {
-			button.innerHTML = '';
-			button.style.backgroundColor = config.color;
+			button.textContent = originalText;
+			button.style.fontSize = '12px';
+			button.style.fontWeight = '500';
 		}, ERROR_FEEDBACK_DURATION);
 	}
 

@@ -100,8 +100,8 @@ button, [role="button"] {
 	/* Re-enable pointer events for buttons */
 	pointer-events: auto;
 	/* Better touch targets for mobile */
-	min-width: 40px;
-	min-height: 40px;
+	min-width: 20px;
+	min-height: 20px;
 	/* Prevent mobile button styling */
 	-webkit-appearance: none;
 	-moz-appearance: none;
@@ -172,8 +172,8 @@ button, [role="button"] {
 .epub-reader-content mark,
 .epub-chapter-wrapper mark,
 .epub-pagination-wrapper mark {
-	background-color: var(--color-accent) !important;
-	color: var(--text-on-accent) !important;
+	background-color: var(--color-accent);
+	color: var(--text-on-accent);
 	padding: 0 2px;
 	border-radius: 2px;
 }
