@@ -12,11 +12,13 @@ export interface EpubReaderSettings {
 	epubPropertyName: string;
 	progressPropertyName: string;
 	highlightConfigs: HighlightConfig[];
+	navigationMode: 'page' | 'chapter';
 }
 
 export const DEFAULT_SETTINGS: EpubReaderSettings = {
 	epubPropertyName: 'epub',
 	progressPropertyName: 'epub-cfi',
+	navigationMode: 'page',
 	highlightConfigs: [
 		{
 			name: 'Important',
@@ -71,6 +73,18 @@ export class EpubReaderSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.progressPropertyName)
 				.onChange(async (value) => {
 					this.plugin.settings.progressPropertyName = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Navigation Mode')
+			.setDesc('Choose how to navigate through the EPUB')
+			.addDropdown(dropdown => dropdown
+				.addOption('page', 'Page-based (with pagination)')
+				.addOption('chapter', 'Chapter-based (scroll through chapter)')
+				.setValue(this.plugin.settings.navigationMode)
+				.onChange(async (value: 'page' | 'chapter') => {
+					this.plugin.settings.navigationMode = value;
 					await this.plugin.saveSettings();
 				}));
 

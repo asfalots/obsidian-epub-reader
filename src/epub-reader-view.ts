@@ -41,6 +41,7 @@ export class EpubReaderView extends ItemView {
 	private currentChapterContent: string = '';
 	private viewportWidth: number = 0;
 	private resizeTimeout: NodeJS.Timeout | null = null;
+	private navigationMode: 'page' | 'chapter' = 'page';
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -95,7 +96,11 @@ export class EpubReaderView extends ItemView {
 					clearTimeout(this.resizeTimeout);
 				}
 				this.resizeTimeout = setTimeout(() => {
-					this.setupPaginationAndRender();
+					if (this.navigationMode === 'page') {
+						this.setupPaginationAndRender();
+					} else {
+						this.setupChapterScrollAndRender();
+					}
 				}, 300);
 			}
 		});
@@ -127,6 +132,7 @@ export class EpubReaderView extends ItemView {
 			this.noteFilePath = state.noteFile || '';
 			this.savedProgress = state.savedProgress;
 			this.pluginInstance = state.plugin;
+			this.navigationMode = this.pluginInstance?.settings?.navigationMode || 'page';
 			this.renderView();
 			if (this.epubPath) {
 				await this.loadEpub();
@@ -370,11 +376,12 @@ export class EpubReaderView extends ItemView {
 				// Don't scope pseudo-elements and already scoped selectors
 				if (trimmed.includes('.epub-reader-content') || 
 					trimmed.includes('.epub-pagination-wrapper') ||
+					trimmed.includes('.epub-chapter-wrapper') ||
 					trimmed.startsWith(':') || 
 					trimmed.startsWith('::')) {
 					return trimmed;
 				}
-				return `.epub-pagination-wrapper ${trimmed}`;
+				return `.epub-reader-content ${trimmed}`;
 			}).join(', ');
 			
 			return `${selectors} {`;
@@ -504,8 +511,12 @@ export class EpubReaderView extends ItemView {
 				this.currentChapterContent = await this.processHtmlContent(rawContent);
 			}
 			
-			// Setup pagination and render current page
-			await this.setupPaginationAndRender();
+			// Setup rendering based on navigation mode
+			if (this.navigationMode === 'page') {
+				await this.setupPaginationAndRender();
+			} else {
+				await this.setupChapterScrollAndRender();
+			}
 			
 			this.currentCfi = item.cfiBase;
 			console.log('Rendered html for index', index, 'page', pageNumber, 'CFI:', this.currentCfi);
@@ -605,14 +616,80 @@ export class EpubReaderView extends ItemView {
 		document.body.removeChild(tempContainer);
 	}
 
+	/**
+	 * Setup chapter scroll mode and render the content
+	 */
+	private async setupChapterScrollAndRender(): Promise<void> {
+		const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
+		if (!contentDiv) return;
+		
+		// Get viewport dimensions
+		const container = this.containerEl.children[1] as HTMLElement;
+		const viewportWidth = container.clientWidth - 32;
+		const viewportHeight = container.clientHeight - 82;
+		
+		// Setup content container for scrolling
+		contentDiv.style.width = `${viewportWidth}px`;
+		contentDiv.style.height = `${viewportHeight}px`;
+		contentDiv.style.overflow = 'auto';
+		contentDiv.style.position = 'relative';
+		contentDiv.style.boxSizing = 'border-box';
+		
+		// Create wrapper for content
+		const contentWrapper = document.createElement('div');
+		contentWrapper.className = 'epub-chapter-wrapper';
+		contentWrapper.style.width = '100%';
+		contentWrapper.style.padding = '0';
+		contentWrapper.style.lineHeight = '1.6';
+		
+		// Apply content to wrapper
+		contentWrapper.innerHTML = this.epubStylesheets + this.currentChapterContent;
+		
+		// Clear and set content
+		contentDiv.innerHTML = '';
+		contentDiv.appendChild(contentWrapper);
+		
+		// Add scroll event listener for automatic progress saving
+		let scrollTimeout: NodeJS.Timeout | null = null;
+		contentDiv.addEventListener('scroll', () => {
+			if (scrollTimeout) {
+				clearTimeout(scrollTimeout);
+			}
+			scrollTimeout = setTimeout(async () => {
+				await this.saveProgress();
+			}, 1000); // Save progress 1 second after scroll stops
+		});
+		
+		// For chapter mode, we don't have pages
+		this.totalPages = 1;
+		this.currentPage = 0;
+	}
+
 	private async navigateToCfi(cfi: string) {
 		await EpubNavigation.navigateToCfi(cfi, this.spineItems, (index: number) => this.renderPage(index, 0));
 	}
 
 	private async saveProgress() {
-		// Save actual page number instead of ratio to avoid floating point errors
-		const progressCfi = `${this.currentCfi}@${this.currentPage}`;
+		// Save progress based on navigation mode
+		let progressCfi: string;
+		if (this.navigationMode === 'page') {
+			// Save actual page number for page mode
+			progressCfi = `${this.currentCfi}@${this.currentPage}`;
+		} else {
+			// For chapter mode, save scroll position if available
+			const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
+			const scrollTop = contentDiv ? contentDiv.scrollTop : 0;
+			progressCfi = `${this.currentCfi}@scroll:${scrollTop}`;
+		}
 		await FileOperations.saveProgress(this.app, this.noteFilePath, progressCfi, this.pluginInstance);
+	}
+
+	/**
+	 * Get the base CFI for the current chapter (without page/scroll info)
+	 * This is used for highlights to ensure compatibility across navigation modes
+	 */
+	private getBaseCfi(): string {
+		return this.currentCfi;
 	}
 
 	private async saveHighlight(selection: Selection, config: any): Promise<void> {
@@ -695,28 +772,43 @@ export class EpubReaderView extends ItemView {
 	// File operations moved to FileOperations module
 
 	private handleNext() {
-		// Check if we can go to next page within current chapter
-		if (this.currentPage < this.totalPages - 1) {
-			this.renderPage(this.currentIndex, this.currentPage + 1);
+		if (this.navigationMode === 'page') {
+			// Page-based navigation
+			if (this.currentPage < this.totalPages - 1) {
+				this.renderPage(this.currentIndex, this.currentPage + 1);
+			} else {
+				// Move to next chapter if available
+				if (this.currentIndex < this.spineItems.length - 1) {
+					this.currentChapterContent = '';
+					this.renderPage(this.currentIndex + 1, 0);
+				}
+			}
 		} else {
-			// Move to next chapter if available
+			// Chapter-based navigation
 			if (this.currentIndex < this.spineItems.length - 1) {
-				this.currentChapterContent = ''; // Reset chapter content
+				this.currentChapterContent = '';
 				this.renderPage(this.currentIndex + 1, 0);
 			}
 		}
 	}
 
 	private handlePrevious() {
-		// Check if we can go to previous page within current chapter
-		if (this.currentPage > 0) {
-			this.renderPage(this.currentIndex, this.currentPage - 1);
+		if (this.navigationMode === 'page') {
+			// Page-based navigation
+			if (this.currentPage > 0) {
+				this.renderPage(this.currentIndex, this.currentPage - 1);
+			} else {
+				// Move to previous chapter if available
+				if (this.currentIndex > 0) {
+					this.currentChapterContent = '';
+					this.loadPreviousChapterLastPage();
+				}
+			}
 		} else {
-			// Move to previous chapter if available
+			// Chapter-based navigation
 			if (this.currentIndex > 0) {
-				this.currentChapterContent = ''; // Reset chapter content
-				// We'll need to calculate total pages of previous chapter first
-				this.loadPreviousChapterLastPage();
+				this.currentChapterContent = '';
+				this.renderPage(this.currentIndex - 1, 0);
 			}
 		}
 	}
@@ -726,19 +818,35 @@ export class EpubReaderView extends ItemView {
 		const nextBtn = this.containerEl.querySelector('#next-btn') as HTMLButtonElement;
 		const positionSpan = this.containerEl.querySelector('#position-indicator') as HTMLElement;
 
-		// Previous button: disabled if at first page of first chapter
-		const atFirstPage = this.currentIndex === 0 && this.currentPage === 0;
-		if (prevBtn) prevBtn.disabled = atFirstPage;
+		if (this.navigationMode === 'page') {
+			// Previous button: disabled if at first page of first chapter
+			const atFirstPage = this.currentIndex === 0 && this.currentPage === 0;
+			if (prevBtn) prevBtn.disabled = atFirstPage;
 
-		// Next button: disabled if at last page of last chapter
-		const atLastPage = this.currentIndex === this.spineItems.length - 1 && this.currentPage === this.totalPages - 1;
-		if (nextBtn) nextBtn.disabled = atLastPage;
+			// Next button: disabled if at last page of last chapter
+			const atLastPage = this.currentIndex === this.spineItems.length - 1 && this.currentPage === this.totalPages - 1;
+			if (nextBtn) nextBtn.disabled = atLastPage;
 
-		// Update position indicator to show page info
-		if (positionSpan) {
-			const chapterInfo = `Ch ${this.currentIndex + 1}/${this.spineItems.length}`;
-			const pageInfo = `Page ${this.currentPage + 1}/${this.totalPages}`;
-			positionSpan.textContent = `${chapterInfo} - ${pageInfo}`;
+			// Update position indicator to show page info
+			if (positionSpan) {
+				const chapterInfo = `Ch ${this.currentIndex + 1}/${this.spineItems.length}`;
+				const pageInfo = `Page ${this.currentPage + 1}/${this.totalPages}`;
+				positionSpan.textContent = `${chapterInfo} - ${pageInfo}`;
+			}
+		} else {
+			// Chapter-based navigation
+			// Previous button: disabled if at first chapter
+			const atFirstChapter = this.currentIndex === 0;
+			if (prevBtn) prevBtn.disabled = atFirstChapter;
+
+			// Next button: disabled if at last chapter
+			const atLastChapter = this.currentIndex === this.spineItems.length - 1;
+			if (nextBtn) nextBtn.disabled = atLastChapter;
+
+			// Update position indicator to show chapter info only
+			if (positionSpan) {
+				positionSpan.textContent = `Chapter ${this.currentIndex + 1}/${this.spineItems.length}`;
+			}
 		}
 	}
 
@@ -918,43 +1026,79 @@ export class EpubReaderView extends ItemView {
 		try {
 			let cfi = savedProgress;
 			let savedPageNumber = 0;
+			let savedScrollTop = 0;
 			
-			// Check if saved progress includes page position (format: cfi@pageNumber)
+			// Check if saved progress includes position information
 			if (savedProgress.includes('@')) {
 				const parts = savedProgress.split('@');
 				cfi = parts[0];
-				const pageValue = parseFloat(parts[1]) || 0;
+				const positionValue = parts[1] || '';
 				
-				// If pageValue is < 1, it's the old ratio format, otherwise it's page number
-				if (pageValue < 1) {
-					// Old ratio format - convert to page number
-					savedPageNumber = Math.round(pageValue * 100); // Rough conversion
+				if (positionValue.startsWith('scroll:')) {
+					// Scroll position for chapter mode
+					savedScrollTop = parseFloat(positionValue.replace('scroll:', '')) || 0;
 				} else {
-					// New page number format
-					savedPageNumber = Math.floor(pageValue);
+					// Page number for page mode
+					const pageValue = parseFloat(positionValue) || 0;
+					
+					// If pageValue is < 1, it's the old ratio format, otherwise it's page number
+					if (pageValue < 1) {
+						// Old ratio format - convert to page number
+						savedPageNumber = Math.round(pageValue * 100); // Rough conversion
+					} else {
+						// New page number format
+						savedPageNumber = Math.floor(pageValue);
+					}
 				}
 			}
 			
 			// First navigate to the chapter
 			await EpubNavigation.navigateToCfi(cfi, this.spineItems, async (index: number) => {
-				// Load the chapter and calculate pagination
+				// Load the chapter and setup based on navigation mode
 				await this.renderPage(index, 0);
 				
-				// If we have a saved page number, navigate to that page
-				if (savedPageNumber > 0 && this.totalPages > 1) {
-					const clampedPage = Math.min(Math.max(0, savedPageNumber), this.totalPages - 1);
-					console.log('Navigating to saved page:', {
-						savedPageNumber,
-						totalPages: this.totalPages,
-						clampedPage
-					});
-					await this.renderPage(index, clampedPage);
+				if (this.navigationMode === 'page') {
+					// Page-based navigation - navigate to saved page
+					if (savedPageNumber > 0 && this.totalPages > 1) {
+						const clampedPage = Math.min(Math.max(0, savedPageNumber), this.totalPages - 1);
+						console.log('Navigating to saved page:', {
+							savedPageNumber,
+							totalPages: this.totalPages,
+							clampedPage
+						});
+						await this.renderPage(index, clampedPage);
+					}
+				} else {
+					// Chapter-based navigation - restore scroll position
+					if (savedScrollTop > 0) {
+						setTimeout(() => {
+							const contentDiv = this.containerEl.querySelector('#epub-content') as HTMLElement;
+							if (contentDiv) {
+								contentDiv.scrollTop = savedScrollTop;
+								console.log('Restored scroll position:', savedScrollTop);
+							}
+						}, 100); // Small delay to ensure content is rendered
+					}
 				}
 			});
 			
 		} catch (error) {
 			console.error('Error navigating to saved progress:', error);
 			await this.renderPage(0);
+		}
+	}
+
+	/**
+	 * Updates the navigation mode and refreshes the view
+	 */
+	async updateNavigationMode(newMode: 'page' | 'chapter'): Promise<void> {
+		if (this.navigationMode === newMode) return;
+		
+		this.navigationMode = newMode;
+		
+		// If we have content loaded, re-render with the new mode
+		if (this.currentChapterContent && this.spineItems) {
+			await this.renderPage(this.currentIndex, 0);
 		}
 	}
 }

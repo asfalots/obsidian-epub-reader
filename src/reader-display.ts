@@ -8,7 +8,11 @@ export class ReaderDisplay {
 	 */
 	static async applyHighlightsToPage(annotations: AnnotationData[], containerEl: HTMLElement): Promise<void> {
 		try {
-			const contentDiv = containerEl.querySelector('#epub-content .epub-pagination-wrapper');
+			// Find content div - works for both page and chapter modes
+			let contentDiv = containerEl.querySelector('#epub-content .epub-pagination-wrapper') as HTMLElement;
+			if (!contentDiv) {
+				contentDiv = containerEl.querySelector('#epub-content .epub-chapter-wrapper') as HTMLElement;
+			}
 			if (!contentDiv) return;
 
 			// Get current HTML content
@@ -31,7 +35,11 @@ export class ReaderDisplay {
 	 * Clears all displayed highlights from the page
 	 */
 	static clearDisplayedHighlights(containerEl: HTMLElement): void {
-		const contentDiv = containerEl.querySelector('#epub-content .epub-pagination-wrapper');
+		// Find content div - works for both page and chapter modes
+		let contentDiv = containerEl.querySelector('#epub-content .epub-pagination-wrapper') as HTMLElement;
+		if (!contentDiv) {
+			contentDiv = containerEl.querySelector('#epub-content .epub-chapter-wrapper') as HTMLElement;
+		}
 		if (!contentDiv) return;
 
 		// Remove all mark tags with annotation data
