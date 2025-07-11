@@ -3,9 +3,19 @@ import { SUCCESS_FEEDBACK_DURATION, ERROR_FEEDBACK_DURATION } from './types';
 export class UIOverlay {
 	
 	/**
+	 * Detects if the current device is mobile
+	 */
+	static isMobile(): boolean {
+		return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+	}
+	
+	/**
 	 * Handles text selection events and shows highlight overlay if text is selected
 	 */
 	static handleTextSelection(event: Event, containerEl: HTMLElement, showOverlayCallback: (selection: Selection | null) => void): void {
+		// Different delay for mobile vs desktop
+		const delay = this.isMobile() ? 100 : 10;
+		
 		// Small delay to ensure selection is complete
 		setTimeout(() => {
 			const selection = window.getSelection();
@@ -16,7 +26,7 @@ export class UIOverlay {
 					showOverlayCallback(selection);
 				}
 			}
-		}, 10);
+		}, delay);
 	}
 
 	/**
@@ -25,6 +35,19 @@ export class UIOverlay {
 	static showHighlightOverlay(selection: Selection | null, pluginInstance: any, containerEl: HTMLElement, highlightClickCallback: (e: Event, selection: Selection, config: any, button: HTMLButtonElement) => Promise<void>): HTMLElement | null {
 		if (!selection || !pluginInstance?.settings?.highlightConfigs) {
 			return null;
+		}
+
+		// Store selection data for mobile (since we might clear the selection)
+		let storedSelectionData: {
+			text: string;
+			range: Range;
+		} | null = null;
+		
+		if (this.isMobile() && selection.rangeCount > 0) {
+			storedSelectionData = {
+				text: selection.toString(),
+				range: selection.getRangeAt(0).cloneRange()
+			};
 		}
 
 		// Remove existing overlay
@@ -49,8 +72,12 @@ export class UIOverlay {
 		const rect = range.getBoundingClientRect();
 		const containerRect = containerEl.getBoundingClientRect();
 		
-		overlay.style.left = `${rect.left - containerRect.left}px`;
-		overlay.style.top = `${rect.bottom - containerRect.top + 5}px`;
+		// Position overlay below selection to avoid conflict with native Android overlay on top
+		const overlayTop = rect.bottom - containerRect.top + 10; // Position below selection
+		const overlayLeft = Math.max(10, rect.left - containerRect.left); // Ensure it stays in bounds
+		
+		overlay.style.left = `${overlayLeft}px`;
+		overlay.style.top = `${overlayTop}px`;
 
 		// Create color buttons
 		pluginInstance.settings.highlightConfigs.forEach((config: any) => {
@@ -67,7 +94,29 @@ export class UIOverlay {
 			`;
 			button.title = config.name;
 			
-			button.addEventListener('click', (e) => highlightClickCallback(e, selection, config, button));
+			button.addEventListener('click', async (e) => {
+				// For mobile, restore selection from stored data if needed
+				let currentSelection = selection;
+				if (this.isMobile() && storedSelectionData && !window.getSelection()?.toString()) {
+					// Recreate selection for mobile
+					const newSelection = window.getSelection();
+					if (newSelection) {
+						newSelection.removeAllRanges();
+						newSelection.addRange(storedSelectionData.range);
+						currentSelection = newSelection;
+					}
+				}
+				
+				// Call the highlight callback
+				await highlightClickCallback(e, currentSelection, config, button);
+				
+				// Clear selection only after highlight is created (mobile only)
+				if (this.isMobile()) {
+					setTimeout(() => {
+						window.getSelection()?.removeAllRanges();
+					}, 100);
+				}
+			});
 			overlay.appendChild(button);
 		});
 

@@ -76,9 +76,16 @@ export class EpubReaderView extends ItemView {
 		});
 		this.containerEl.focus();
 		
-		// Add text selection handling
-		this.containerEl.addEventListener('mouseup', this.handleTextSelection.bind(this));
-		this.containerEl.addEventListener('keyup', this.handleTextSelection.bind(this));
+		// Add text selection handling - different approach for mobile
+		if (UIOverlay.isMobile()) {
+			// Mobile-specific touch handling
+			this.containerEl.addEventListener('touchend', this.handleTextSelection.bind(this));
+			document.addEventListener('selectionchange', this.handleTextSelection.bind(this));
+		} else {
+			// Desktop handling
+			this.containerEl.addEventListener('mouseup', this.handleTextSelection.bind(this));
+			this.containerEl.addEventListener('keyup', this.handleTextSelection.bind(this));
+		}
 		
 		// Add resize observer to recalculate pagination when viewport changes
 		const resizeObserver = new ResizeObserver(() => {
@@ -777,6 +784,15 @@ export class EpubReaderView extends ItemView {
 	}
 
 	private handleTextSelection(event: Event) {
+		// Prevent default behavior on mobile text selection, but not on buttons
+		if (UIOverlay.isMobile() && event.type === 'touchend') {
+			const target = event.target as HTMLElement;
+			// Don't prevent default if touching buttons or interactive elements
+			if (!target.closest('button') && !target.closest('[role="button"]') && !target.closest('a')) {
+				event.preventDefault();
+			}
+		}
+		
 		UIOverlay.handleTextSelection(event, this.containerEl, (selection) => this.showHighlightOverlay(selection));
 	}
 

@@ -66,3 +66,59 @@ If your plugin does not need CSS, delete this file.
 .highlight-overlay .highlight-btn:active {
 	transform: scale(0.95);
 }
+
+/* Mobile-specific improvements for text selection */
+#epub-content {
+	/* Allow text selection but prevent native mobile copy/paste overlay conflicts */
+	-webkit-user-select: text;
+	-moz-user-select: text;
+	-ms-user-select: text;
+	user-select: text;
+	
+	/* Improve touch handling on mobile */
+	-webkit-touch-callout: none; /* Disable iOS callout */
+	-webkit-tap-highlight-color: transparent; /* Remove tap highlight */
+}
+
+/* Ensure buttons remain clickable */
+button, [role="button"] {
+	-webkit-touch-callout: default;
+	-webkit-tap-highlight-color: rgba(0,0,0,0.1);
+}
+
+/* Enhanced highlight overlay for mobile */
+.epub-highlight-overlay {
+	/* Ensure overlay is above mobile browser UI but below selection */
+	z-index: 999 !important;
+	/* Improve touch targets for mobile */
+	min-height: 40px;
+	/* Prevent overlay from blocking text selection */
+	pointer-events: none;
+}
+
+.epub-highlight-btn {
+	/* Re-enable pointer events for buttons */
+	pointer-events: auto;
+	/* Better touch targets for mobile */
+	min-width: 40px;
+	min-height: 40px;
+	/* Prevent mobile button styling */
+	-webkit-appearance: none;
+	-moz-appearance: none;
+	appearance: none;
+}
+
+/* Mobile media query for better responsiveness */
+@media (max-width: 768px), (pointer: coarse) {
+	.epub-highlight-overlay {
+		padding: 12px;
+		gap: 8px;
+		/* Better positioning for mobile - don't transform as it conflicts */
+	}
+	
+	.epub-highlight-btn {
+		width: 44px;
+		height: 44px;
+		font-size: 16px;
+	}
+}
